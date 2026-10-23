@@ -1,0 +1,14 @@
+# EnviroMesh Backend (RPi 2 Core Server) — Python dependencies
+
+# ASGI framework and server
+fastapi==0.110.1
+uvicorn[standard]==0.27.1
+
+# MQTT client for consuming telemetry from EMQX
+paho-mqtt==2.1.0
+
+# PostgreSQL / TimescaleDB driver
+psycopg2-binary==2.9.9
+
+# Environment variable loading
+python-dotenv==1.0.0

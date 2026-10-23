@@ -1,0 +1,1 @@
+"""Backend route modules (placeholder for future REST/WebSocket endpoints)."""
