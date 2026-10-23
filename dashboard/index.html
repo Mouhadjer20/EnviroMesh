@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EnviroMesh — Environmental Monitoring Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f5f7fa; color: #1f2937; line-height: 1.6; }
+    header { background: #0f172a; color: #fff; padding: 1.5rem 2rem; }
+    header h1 { font-size: 1.5rem; letter-spacing: -0.5px; }
+    header p { font-size: 0.9rem; color: #94a3b8; margin-top: 0.25rem; }
+    main { max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #0f172a; }
+    .placeholder { color: #64748b; font-style: italic; }
+    .badge { display: inline-block; background: #e2e8f0; color: #475569; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.8rem; margin-right: 0.5rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+    .metric { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; text-align: center; }
+    .metric .value { font-size: 1.75rem; font-weight: 700; color: #0f172a; }
+    .metric .label { font-size: 0.85rem; color: #64748b; margin-top: 0.25rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EnviroMesh</h1>
+    <p>Environmental Monitoring &amp; Actuation Platform — Dashboard</p>
+  </header>
+  <main>
+    <section class="card">
+      <h2>System Status</h2>
+      <p class="placeholder">Dashboard frontend placeholder — replace <code>index.html</code> with your built React/Vue/Angular app.</p>
+      <div class="grid" style="margin-top:1rem;">
+        <div class="metric"><div class="value">--</div><div class="label">Devices Online</div></div>
+        <div class="metric"><div class="value">--</div><div class="label">Gas PPM</div></div>
+        <div class="metric"><div class="value">--</div><div class="label">Temperature (°C)</div></div>
+        <div class="metric"><div class="value">--</div><div class="label">Humidity (%)</div></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Quick Links</h2>
+      <p>
+        <span class="badge">API</span>
+        <span class="badge">MQTT</span>
+        <span class="badge">TimescaleDB</span>
+        <span class="badge">EMQX</span>
+      </p>
+      <p class="placeholder" style="margin-top:1rem;">Build your frontend in this folder and update this Dockerfile to copy the compiled assets into <code>/usr/share/nginx/html</code>.</p>
+    </section>
+  </main>
+</body>
+</html>
