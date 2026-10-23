@@ -24,8 +24,7 @@ The network is divided into field sensor nodes, edge gateways, core servers, and
 | **ESP32 Node 2** (G4) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi 1 (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
 | **ESP32 Node 3** (G3) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | RPi 2 (Core Server) | Direct IP telemetry for local infrastructural nodes. |
 | **ESP32 Servo Node** (G6) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor, Micro Servo 9g, RIP sensor | Wi-Fi (MQTT / TCP) | Local Operator / RPi BLE Proxy | Short-range secure valve/latch actuation. |
-| **Raspberry Pi 1** | LoRA Concentrator (SX1302) | Ethernet (TCP/IP) | RPi 2 (Core Server) | Edge Gateway: translates RF LoRA frames into structured JSON/MQTT packets. |
-| **Raspberry Pi 2** | Core Processing Server | HTTPS / WebSockets | User Dashboard | Core Server: hosts databases, MQTT broker, video proxy, and RBAC auth. |
+| **Raspberry Pi** | Core Processing Server | HTTPS / WebSockets | User Dashboard | Core Server: hosts databases, MQTT broker, video proxy, and RBAC auth, LoRA Concentrator (SX1302), translates RF LoRA frames into structured JSON/MQTT packets. |
 
 ---
 
@@ -67,27 +66,29 @@ The network is divided into field sensor nodes, edge gateways, core servers, and
 |                           EDGE & CORE PROCESSING LAYER                                       |
 +==============================================================================================+
 |                                                                                              |
-|  +--------------------------------+      +------------------------------------------------+  |
-|  | RASPBERRY PI 1                 |      | RASPBERRY PI 2                                 |  |
-|  | LoRa EDGE GATEWAY              |      | CORE PROCESSING SERVER                         |  |
-|  |--------------------------------|      |------------------------------------------------|  |
-|  | LoRa Concentrator (SX1302)     |      | MQTT Broker (EMQX)                             |  |
-|  | LoRa Frame Reception           |      | TimescaleDB                                    |  |
-|  | RF-to-JSON Translation         |      | Telemetry & Provenance Storage                 |  |
-|  | MQTT / TCP Forwarding          |      | MediaMTX Video Stream Proxy                    |  |
-|  +----------------+---------------+      | BLE-to-MQTT Bridge (if BLE is used)            |  |
-|                   |                      | Nginx Reverse Proxy                            |  |
-|                   | Ethernet / TCP-IP    | Keycloak Authentication & RBAC                 |  |
-|                   +--------------------->|                                                |  |
-|                                          | MQTT Ingestion & Data Processing               |  |
-|                                          +------------------------+-----------------------+  |
-|                                                                   ^                          |
-+===================================================================|==========================+
-                                                                    |
-                                         Wi-Fi / MQTT over TCP      |
-                                         from ESP32 Node 3 & G6     |
-                                                                    |
-                                                                    |
+|        +------------------------------------------------+                                    |
+|        | RASPBERRY PI 2                                 |                                    |
+|        | CORE PROCESSING SERVER                         |                                    |
+|        |------------------------------------------------|                                    |
+|        | MQTT Broker (EMQX)                             |                                    |
+|        | TimescaleDB                                    |                                    |
+|        | Telemetry & Provenance Storage                 |                                    |
+|        | MediaMTX Video Stream Proxy                    |                                    |
+|        | BLE-to-MQTT Bridge (if BLE is used)            |                                    |
+|        | Nginx Reverse Proxy                            |                                    |
+|        | Keycloak Authentication & RBAC                 |                                    |
+|        | MQTT Ingestion & Data Processing               |                                    |
+|        | LoRa Frame Reception                           |                                    |
+|        | LoRa Concentrator (SX1302)                     |                                    |
+|        | MQTT Ingestion & Data Processing               |                                    |
+|        +------------------------+-----------------------+                                    |
+|                                 ^                                                            |
++=================================|============================================================+
+                                  |
+       Wi-Fi / MQTT over TCP      |
+       from ESP32 Node 3 & G6     |
+                                  |
+                                  |
 +==============================================================================================+
 |                                  VIDEO SUBSYSTEM                                             |
 +==============================================================================================+
@@ -121,7 +122,7 @@ The network is divided into field sensor nodes, edge gateways, core servers, and
 ```
 ## 4. Database Architecture (Polyglot Persistence)
 
-To balance relational integrity with extreme write speeds, the system uses two distinct databases hosted on **Raspberry Pi 2**.
+To balance relational integrity with extreme write speeds, the system uses two distinct databases hosted on **Raspberry Pi**.
 
 ### Database 1: SQL (PostgreSQL) — *Control Plane & Metadata*
 
@@ -226,7 +227,7 @@ The database registry remains authoritative for device ownership and location. D
 
 **Hardware:** MQ-2, DHT11, Water Sensor  
 **Communication:** LoRa at 433 MHz  
-**Destination:** Raspberry Pi 1 (LoRa Gateway)  
+**Destination:** Raspberry Pi
 **Device ID:** `G11` (example)
 
 ```json
@@ -257,7 +258,7 @@ The database registry remains authoritative for device ownership and location. D
 
 **Hardware:** MQ-2, DHT11, Water Sensor  
 **Communication:** LoRa at 433 MHz  
-**Destination:** Raspberry Pi 1  
+**Destination:** Raspberry Pi
 **Device ID:** `G41` (example)
 
 ```json
@@ -286,7 +287,7 @@ The database registry remains authoritative for device ownership and location. D
 
 **Hardware:** BMP280, MQ-2, Water Sensor  
 **Communication:** Wi-Fi / MQTT over TCP  
-**Destination:** Raspberry Pi 2 (Core Server)  
+**Destination:** Raspberry Pi
 **Device ID:** `G31` (example)
 
 ```json
@@ -316,7 +317,7 @@ The database registry remains authoritative for device ownership and location. D
 
 **Hardware:** MQ-2, DHT11, Water Sensor, PIR, Micro Servo 9g  
 **Communication:** Wi-Fi / MQTT over TCP  
-**Destination:** Raspberry Pi 2  
+**Destination:** Raspberry Pi
 **Device ID:** `G61` (example)
 
 ```json
@@ -439,7 +440,7 @@ The standardized envelope maps to the `sensor_telemetry` table as follows:
 
 The `group_code` can be resolved to the relational group registry during ingestion. If you need it directly in telemetry queries, it can also be stored as denormalized metadata.
 
-For LoRa nodes, Raspberry Pi 1 should decode the packet and construct the standardized JSON envelope before forwarding it to Raspberry Pi 2. Wi-Fi nodes can publish the same envelope directly through MQTT.
+For LoRa nodes, Raspberry Pi should decode the packet and construct the standardized JSON envelope. Wi-Fi nodes can publish the same envelope directly through MQTT.
 
 If you later use MongoDB, the envelope can be stored as a time-series document. With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JSONB`.
 
