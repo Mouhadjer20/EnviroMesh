@@ -1,0 +1,68 @@
+
+name: enviromesh
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: enviromesh-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: UTC
+    ports:
+      # Database accessible only from the Raspberry Pi itself.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - enviromesh_backend
+
+  emqx:
+    image: emqx/emqx:5
+    container_name: enviromesh-emqx
+    restart: unless-stopped
+    environment:
+      EMQX_NODE_NAME: emqx@127.0.0.1
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+      EMQX_ALLOW_ANONYMOUS: "false"
+      TZ: UTC
+    ports:
+      # MQTT for ESP32 nodes and the RPi 1 gateway.
+      - "${MQTT_BIND_IP:-0.0.0.0}:${MQTT_PORT:-1883}:1883"
+      # Dashboard restricted to the Raspberry Pi itself.
+      - "127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083"
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+    healthcheck:
+      test:
+        - CMD
+        - /opt/emqx/bin/emqx
+        - ctl
+        - status
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - enviromesh_backend
+
+volumes:
+  timescale_data:
+  emqx_data:
+  emqx_log:
+
+networks:
+  enviromesh_backend:
+    driver: bridge

@@ -1,6 +1,6 @@
 # Enterprise IoT Architecture: Technical Specification & Implementation Blueprint
 
-**Project Title:** Scalable Hybrid IoT Monitoring & Actuation Platform
+**Project Title:** EnviroMesh
 
 **Target Audience:** Development & Engineering Team
 
@@ -543,6 +543,27 @@ To validate system robustness, your team should execute these simulated security
 * **Phase 4: Dashboard & Security Layer**
 * Build the web UI with email/password login.
 * Connect Grafana or a custom React dashboard to display real-time time-series charts filtered by user roles.
+
+## 8. Start EnviroMesh
+
+```bash
+# Create your private environment file
+cp .env.example .env
+chmod 600 .env
+
+# Edit passwords and network settings
+nano .env
+
+# Validate the Compose configuration
+docker compose config
+
+# Start the services
+docker compose up -d
+
+# Check service status and logs
+docker compose ps
+docker compose logs -f emqx timescaledb
+```
 
 ## 8. Resources
 1. [IoT Architecture](https://www.kaaiot.com/iot-knowledge-base/visualizing-iot-architecture-with-diagrams)
