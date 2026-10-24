@@ -36,4 +36,4 @@ auth/
 
 - Project architecture: [`../../README.md`](../../README.md)
 - Database layer: [`../../db`](../../db)
-- API routes: [`../api/routes`](../api/routes)
+- API routes: [`../routes`](../routes)

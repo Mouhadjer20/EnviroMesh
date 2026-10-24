@@ -1,7 +1,8 @@
 """Backend entry point for RPi (Core Processing Server).
 
-Runs the MQTT subscriber loop that bridges incoming telemetry from the
-LoRa gateway / Wi-Fi nodes into validation, persistence, and alerting.
+Runs the LoRa receiver (SX1278) and the MQTT subscriber (EMQX) concurrently so
+that telemetry from both the LoRa gateway and Wi-Fi nodes is ingested,
+validated, and persisted into TimescaleDB at the same time.
 
 FastAPI application entry point for the EnviroMesh core server.
 
@@ -13,15 +14,16 @@ import logging
 import os
 import signal
 import sys
+import threading
 
 # Ensure the backend directory is on sys.path so that `services.*` and
 # `routes.*` packages can be imported regardless of the current working directory.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from services.mqtt_subscriber import MqttSubscriber
+from services.lora_receiver import run as lora_run
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from routes import devices, telemetry, alerts, users
 
@@ -31,26 +33,11 @@ logger = logging.getLogger("main")
 
 load_dotenv()
 
-#BROKER_HOST = os.getenv("EMQX_URL", os.getenv("MQTT_HOST", "localhost"))
-#BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
-#TOPIC_PREFIX = os.getenv("TOPIC_PRIFIX", os.getenv("TOPIC_PREFIX", "enviromesh"))
-#TOPIC = f"{TOPIC_PREFIX}" #/devices/G11/telemetry
-
-#logger.info("Enviarment %s:%d, %s", BROKER_HOST, BROKER_PORT, TOPIC)
-
 app = FastAPI(
     title="EnviroMesh API",
     description="Core server API for the Environmental Monitoring System",
     version="1.0.0",
 )
-
-#app.add_middleware(
-#    CORSMiddleware,
-#    allow_origins=["*"],  # TODO: Restrict to dashboard origin in production
-#    allow_credentials=True,
-#    allow_methods=["*"],
-#    allow_headers=["*"],
-#)
 
 app.include_router(devices.router)
 app.include_router(telemetry.router)
@@ -69,6 +56,7 @@ logger = logging.getLogger("backend")
 
 def main():
     logger.info("Starting EnviroMesh backend on RPi (Core Server)")
+
     mqtt_host = os.getenv("MQTT_HOST", os.getenv("EMQX_URL", "localhost"))
     mqtt_port = int(os.getenv("MQTT_PORT", 1883))
     mqtt_topic = os.getenv("MQTT_TOPIC", os.getenv("TOPIC_PRIFIX", "enviromesh/devices/+/telemetry"))
@@ -77,9 +65,16 @@ def main():
 
     subscriber = MqttSubscriber(mqtt_host, mqtt_port, mqtt_topic)
 
+    # Run the LoRa receiver in a background thread so it does not block the
+    # MQTT subscriber or the FastAPI event loop.
+    lora_thread = threading.Thread(target=lora_run, name="lora-receiver", daemon=True)
+    lora_thread.start()
+    logger.info("LoRa receiver thread started")
+
     def shutdown(signum, frame):
         logger.info("Shutdown signal received")
         subscriber.stop()
+        # The LoRa receiver thread is a daemon, so it will be reaped on exit.
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)

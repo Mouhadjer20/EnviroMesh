@@ -225,6 +225,7 @@ my_files/
 .vscode/
 .DS_Store
 hashgen/
+.kilo/
 
 
 # Nodes (NPM)
