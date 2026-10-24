@@ -11,7 +11,7 @@ from datetime import datetime
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=list[dict])
 async def get_telemetry(
     device_id: Optional[str] = Query(None),
     start: Optional[datetime] = Query(None),

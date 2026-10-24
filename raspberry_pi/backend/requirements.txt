@@ -1,4 +1,4 @@
-# EnviroMesh Backend (RPi 2 Core Server) — Python dependencies
+# EnviroMesh Backend (RPi Core Server) — Python dependencies
 
 # ASGI framework and server
 fastapi==0.110.1

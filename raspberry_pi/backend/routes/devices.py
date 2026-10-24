@@ -10,7 +10,7 @@ from typing import List, Optional
 router = APIRouter(prefix="/devices", tags=["devices"])
 
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=list[dict])
 async def list_devices():
     """List all registered devices."""
     # TODO: Implement device listing from database

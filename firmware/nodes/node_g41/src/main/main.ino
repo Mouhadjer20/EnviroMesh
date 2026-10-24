@@ -2,7 +2,7 @@
 # Firmware: ESP32 Node G41 (Group 4 - LoRa environmental node)
 # Device ID: G41
 # Sensors: MQ-2 (gas/smoke), DHT11 (temperature/humidity), Water leak sensor
-# Communication: LoRa 433 MHz -> RPi 1 (LoRa Gateway)
+# Communication: LoRa 433 MHz -> RPi (LoRa Gateway)
 # =============================================================================
 */
 

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------
-# EnviroMesh Backend — RPi 2 Core Processing Server (Python/FastAPI)
+# EnviroMesh Backend — RPi Core Processing Server (Python/FastAPI)
 # Build context: ./raspberry_pi/backend
 # ---------------------------------------------------------------
 FROM python:3.11-slim AS builder

@@ -20,105 +20,105 @@ The network is divided into field sensor nodes, edge gateways, core servers, and
 
 | Component | Hardware / Sensors | Communication Protocol | Target Destination | Role & Justification |
 | --- | --- | --- | --- | --- |
-| **ESP32 Node 1** (Group 1= G1) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi 1 (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
-| **ESP32 Node 2** (G4) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi 1 (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
-| **ESP32 Node 3** (G3) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | RPi 2 (Core Server) | Direct IP telemetry for local infrastructural nodes. |
+| **ESP32 Node 1** (Group 1= G1) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
+| **ESP32 Node 2** (G4) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
+| **ESP32 Node 3** (G3) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | RPi (Core Server) | Direct IP telemetry for local infrastructural nodes. |
 | **ESP32 Servo Node** (G6) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor, Micro Servo 9g, RIP sensor | Wi-Fi (MQTT / TCP) | Local Operator / RPi BLE Proxy | Short-range secure valve/latch actuation. |
-| **Raspberry Pi** | Core Processing Server | HTTPS / WebSockets | User Dashboard | Core Server: hosts databases, MQTT broker, video proxy, and RBAC auth, LoRA Concentrator (SX1302), translates RF LoRA frames into structured JSON/MQTT packets. |
+| **Raspberry Pi** | Core Processing Server | HTTPS / WebSockets | User Dashboard | Core Server: hosts databases, MQTT broker, video proxy, and RBAC auth, LoRA Concentrator (SX1278), translates RF LoRA frames into structured JSON/MQTT packets. |
 
 ---
 
 ## 3. Revised System Topology Diagram
 
 ```text
-+==============================================================================================+
-|                              FIELD SENSORS & ACTUATORS                                       |
-+==============================================================================================+
-|                                                                                              |
-|     +------------------------+      +------------------------+                               |
-|     | ESP32 NODE 1 (G1)      |      | ESP32 NODE 2 (G4)      |                               |
-|     |------------------------|      |------------------------|                               |
-|     | MQ-2  : Gas / Smoke    |      | MQ-2  : Gas / Smoke    |                               |
-|     | DHT11 : Temp / Hum     |      | DHT11 : Temp / Hum     |                               |
-|     | Water : Leak Detection |      | Water : Leak Detection |                               |
-|     +-----------+------------+      +-----------+------------+                               |
-|                 |                               |                                            |
-|                 +---------------+---------------+                                            |
-|                                 |                                                            |
-|                          LoRa 433 MHz                                                        |
-|                                 |                                                            |
-|  +---------------------------+  |   +---------------------------+                            |
-|  | ESP32 NODE 3 (G3)         |  |   | ESP32 SERVO NODE (G6)     |                            |
-|  |---------------------------|  |   |---------------------------|                            |
-|  | BMP280 : Pressure / Temp  |  |   | MQ-2    : Gas / Smoke     |                            |
-|  | MQ-2   : Gas / Smoke      |  |   | DHT11   : Temp / Hum      |                            |
-|  | Water  : Leak Detection   |  |   | Water   : Leak Detection  |                            |
-|  |                           |  |   | PIR     : Motion Detection|                            |
-|  | Wi-Fi / MQTT over TCP     |  |   | Servo   : Valve / Latch   |                            |
-|  +-------------+-------------+  |   +-------------+-------------+                            |
-|                |                |                 |                                          |
-+================|================|=================|==========================================+
-                 |                |                 |
-                 | Wi-Fi /        |                 | Wi-Fi / MQTT over TCP
-                 | MQTT over TCP  |                 |
-                 v                v                 v
-+==============================================================================================+
-|                           EDGE & CORE PROCESSING LAYER                                       |
-+==============================================================================================+
-|                                                                                              |
-|        +------------------------------------------------+                                    |
-|        | RASPBERRY PI 2                                 |                                    |
-|        | CORE PROCESSING SERVER                         |                                    |
-|        |------------------------------------------------|                                    |
-|        | MQTT Broker (EMQX)                             |                                    |
-|        | TimescaleDB                                    |                                    |
-|        | Telemetry & Provenance Storage                 |                                    |
-|        | MediaMTX Video Stream Proxy                    |                                    |
-|        | BLE-to-MQTT Bridge (if BLE is used)            |                                    |
-|        | Nginx Reverse Proxy                            |                                    |
-|        | Keycloak Authentication & RBAC                 |                                    |
-|        | MQTT Ingestion & Data Processing               |                                    |
-|        | LoRa Frame Reception                           |                                    |
-|        | LoRa Concentrator (SX1302)                     |                                    |
-|        | MQTT Ingestion & Data Processing               |                                    |
-|        +------------------------+-----------------------+                                    |
-|                                 ^                                                            |
-+=================================|============================================================+
-                                  |
-       Wi-Fi / MQTT over TCP      |
-       from ESP32 Node 3 & G6     |
-                                  |
-                                  |
-+==============================================================================================+
-|                                  VIDEO SUBSYSTEM                                             |
-+==============================================================================================+
-|                                                                                              |
-|  +--------------------------+          Wi-Fi / RTSP          +----------------------------+  |
-|  | ESP32-CAM (OPTIONAL)      | -----------------------------> | RPi 2: MediaMTX           |  |
-|  | Video Capture             |                                | Video Stream Proxy        |  |
-|  +--------------------------+                                +-------------+--------------+  |
-|                                                                          |                   |
-+==========================================================================|===================+
-                                                                           |
-                                                                           | HTTPS / WSS
-                                                                           v
-+==============================================================================================+
-|                                   USER DASHBOARD                                             |
-+==============================================================================================+
-|                                                                                              |
-|  +----------------------------------------------------------------------------------------+  |
-|  | Web Interface                                                                          |  |
-|  |                                                                                        |  |
-|  | - Real-Time Sensor Telemetry                                                           |  |
-|  | - Gas / Temperature / Humidity / Water / Pressure Monitoring                           |  |
-|  | - Motion Detection & Actuator Status                                                   |  |
-|  | - Video Monitoring (if ESP32-CAM is deployed)                                          |  |
-|  | - Role-Based Access Control (RBAC)                                                     |  |
-|  | - Zone-Scoped Access (Zone A / Zone B)                                                 |  |
-|  | - Alerts, Events & Historical Data                                                     |  |
-|  +----------------------------------------------------------------------------------------+  |
-|                                                                                              |
-+==============================================================================================+
+        +====================================================================+
+        |                              FIELD SENSORS & ACTUATORS             |
+        +====================================================================+
+        |                                                                    |
+        |     +------------------------+      +------------------------+     |
+        |     | ESP32 NODE 1 (G1)      |      | ESP32 NODE 2 (G4)      |     |
+        |     |------------------------|      |------------------------|     |
+        |     | MQ-2  : Gas / Smoke    |      | MQ-2  : Gas / Smoke    |     |
+        |     | DHT11 : Temp / Hum     |      | DHT11 : Temp / Hum     |     |
+        |     | Water : Leak Detection |      | Water : Leak Detection |     |
+        |     +-----------+------------+      +-----------+------------+     |
+        |                 |                               |                  |
+        |                 +---------------+---------------+                  |
+        |                                 |                                  |
+        |                          LoRa 433 MHz                              |
+        |                                 |                                  |
+        |  +---------------------------+  |   +---------------------------+  |
+        |  | ESP32 NODE 3 (G3)         |  |   | ESP32 SERVO NODE (G6)     |  |
+        |  |---------------------------|  |   |---------------------------|  |
+        |  | BMP280 : Pressure / Temp  |  |   | MQ-2    : Gas / Smoke     |  |
+        |  | MQ-2   : Gas / Smoke      |  |   | DHT11   : Temp / Hum      |  |
+        |  | Water  : Leak Detection   |  |   | Water   : Leak Detection  |  |
+        |  |                           |  |   | PIR     : Motion Detection|  |
+        |  | Wi-Fi / MQTT over TCP     |  |   | Servo   : Valve / Latch   |  |
+        |  +-------------+-------------+  |   +-------------+-------------+  |
+        |                |                |                 |                |
+        +================|================|=================|================+
+                         |                |                 |
+                         | Wi-Fi /        |                 | Wi-Fi / MQTT over TCP
+                         | MQTT over TCP  |                 |
+                         v                v                 v
+        +====================================================================+
+        |                           EDGE & CORE PROCESSING LAYER             |
+        +====================================================================+
+        |                                                                    |
+        |        +------------------------------------------------+          |
+        |        | RASPBERRY PI                                   |          |
+        |        | CORE PROCESSING SERVER                         |          |
+        |        |------------------------------------------------|          |
+        |        | MQTT Broker (EMQX)                             |          |
+        |        | TimescaleDB                                    |          |
+        |        | Telemetry & Provenance Storage                 |          |
+        |        | MediaMTX Video Stream Proxy                    |          |
+        |        | BLE-to-MQTT Bridge (if BLE is used)            |          |
+        |        | Nginx Reverse Proxy                            |          |
+        |        | Keycloak Authentication & RBAC                 |          |
+        |        | MQTT Ingestion & Data Processing               |          |
+        |        | LoRa Frame Reception                           |          |
+        |        | LoRa Concentrator (SX1278)                     |          |
+        |        | MQTT Ingestion & Data Processing               |          |
+        |        +------------------------+-----------------------+          |
+        |                                 ^                                  |
+        +=================================|==================================+
+                                          |
+               Wi-Fi / MQTT over TCP      |
+               from ESP32 Node 3 & G6     |
+                                          |
+                                          |
+        +=====================================================================+
+        |                                  VIDEO SUBSYSTEM                    |
+        +=====================================================================+
+        |                                                                     |
+        |  +---------------------+   Wi-Fi / RTSP   +----------------------+  |
+        |  | ESP32-CAM (OPTIONAL)| ---------------> | RPi: MediaMTX        |  |
+        |  | Video Capture       |                  | Video Stream Proxy   |  |
+        |  +---------------------+                  +-------------+--------+  |
+        |                                                         |           |
+        +=========================================================|===========+
+                                                                  |
+                                                  HTTPS / WSS     | 
+                                                                  v
+        +=====================================================================+
+        |                           USER DASHBOARD                            |
+        +=====================================================================+
+        |                                                                     |
+        |  +---------------------------------------------------------------+  |
+        |  | Web Interface                                                 |  |
+        |  |                                                               |  |
+        |  | - Real-Time Sensor Telemetry                                  |  |
+        |  | - Gas / Temperature / Humidity / Water / Pressure Monitoring  |  |
+        |  | - Motion Detection & Actuator Status                          |  |
+        |  | - Video Monitoring (if ESP32-CAM is deployed)                 |  |
+        |  | - Role-Based Access Control (RBAC)                            |  |
+        |  | - Zone-Scoped Access (Zone A / Zone B)                        |  |
+        |  | - Alerts, Events & Historical Data                            |  |
+        |  +---------------------------------------------------------------+  |
+        |                                                                     |
+        +=====================================================================+
 ```
 ## 4. Database Architecture (Polyglot Persistence)
 
@@ -162,7 +162,7 @@ Stores user identities, password hashes, RBAC permissions, and the physical asse
   * `configuration` (JSONB, optional — sensor-specific settings)
   * `UNIQUE(sensor_id, device_id)` — prevents duplicate sensor-device assignments
 
-### Database 2: NoSQL / Time-Series (TimescaleDB / MongoDB) — *Telemetry Plane*
+### Database 2: NoSQL / Time-Series (TimescaleDB) — *Telemetry Plane*
 
 Stores high-frequency sensor readings, timestamps, and unstructured raw packets to prevent database bloat and optimize time-based queries.
 
@@ -442,7 +442,7 @@ The `group_code` can be resolved to the relational group registry during ingesti
 
 For LoRa nodes, Raspberry Pi should decode the packet and construct the standardized JSON envelope. Wi-Fi nodes can publish the same envelope directly through MQTT.
 
-If you later use MongoDB, the envelope can be stored as a time-series document. With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JSONB`.
+With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JSONB`.
 
 ---
 
@@ -458,6 +458,85 @@ If you later use MongoDB, the envelope can be stored as a time-series document. 
 8. **Retention:** Configure telemetry retention according to project requirements and preserve selected events when audit or incident investigations require it.
 
 This standardized schema provides a consistent foundation for the four registered ESP32 node types, the two Raspberry Pi processing layers, and future sensor extensions.
+
+### 5.11. Backend Directory Structure (Python/FastAPI)
+
+The core server backend was restructured into `raspberry_pi/backend/` with a
+clean separation between API routes, business services, and infrastructure.
+
+#### 5.11.1. Python Package Layout
+
+```
+raspberry_pi/backend/
+├── main.py                       # Entry point: FastAPI app + MQTT subscriber loop
+├── requirements.txt              # Python runtime dependencies
+├── Dockerfile                    # Container image (python:3.11-slim)
+├── .env                          # Environment variables (MQTT, DB, API)
+│
+├── routes/                       # FastAPI route modules (absolute imports)
+│   ├── __init__.py
+│   ├── devices.py                # GET/POST/PUT/DELETE /devices
+│   ├── telemetry.py              # GET /telemetry, GET /telemetry/{id}/latest
+│   ├── alerts.py                 # GET/POST /alerts, PATCH /alerts/{id}/ack
+│   └── users.py                  # User management endpoints
+│
+└── services/                     # Business logic services
+    ├── __init__.py
+    ├── mqtt_subscriber.py        # Paho-MQTT client; subscribes, validates, persists
+    ├── database_writer.py        # TimescaleDB/PostgreSQL writer (psycopg2)
+    └── telemetry_validator.py    # Validates telemetry metrics & ranges
+```
+
+#### 5.11.2. Python Import Chain
+
+The backend uses **absolute imports** (not relative). The import chain is:
+
+1. **`main.py` → `main.py` entry point**
+   ```python
+   from services.mqtt_subscriber import MqttSubscriber
+   from routes import devices, telemetry, alerts, users
+   ```
+
+2. **`services/mqtt_subscriber.py`**
+   - Inserts its parent directory (`backend/`) into `sys.path` so the `services` package is importable
+   - Uses **relative imports** to access sibling modules
+   - `from .telemetry_validator import validate`
+   - `from .database_writer import write_telemetry`
+
+3. **`services/telemetry_validator.py`**
+   - Standalone; only Python standard library (`logging`)
+
+4. **`services/database_writer.py`**
+   - Imports third-party packages: `psycopg2`, `python-dotenv`
+   - Pure absolute imports
+
+5. **`routes/devices.py`, `routes/telemetry.py`, `routes/alerts.py`, `routes/users.py`**
+   - Import FastAPI only from the standard library
+   - All use absolute imports
+
+#### 5.11.3. Running the Backend
+
+From the `backend/` directory:
+```bash
+cd raspberry_pi/backend
+python main.py
+```
+
+The `sys.path` fix in `main.py` ensures the import chain works regardless of
+the current working directory.
+
+#### 5.11.4. Key Changes from Previous Structure
+
+| Old Path | New Path |
+|---|---|
+| `server/api/main.py` | `raspberry_pi/backend/main.py` |
+| `server/requirements.txt` | `raspberry_pi/backend/requirements.txt` |
+| `server/api/routes/` | `raspberry_pi/backend/routes/` |
+| `server/api/services/` | `raspberry_pi/backend/services/` |
+| `server/api/schemas/` | `raspberry_pi/backend/routes/__init__.py` (placeholder) |
+| `server/api/auth/` | `raspberry_pi/backend/auth/README.md` (documentation only) |
+
+No longer used: `server/api/main.py`, `server/api/schemas/`, `server/requirements.txt`.
 ## 6. Security Architecture & Access Control (NEXT PHASE, not including in this phase of Deployment DB and installation devices)
 
 ### A. Authentication & RBAC
@@ -523,21 +602,21 @@ To validate system robustness, your team should execute these simulated security
 
 ## 7. Implementation Roadmap for the Team
 
-* **Phase 1: Core Server & Database Setup (RPi 2)**
+* **Phase 1: Core Server & Database Setup (RPi)**
 * Install PostgreSQL and TimescaleDB/InfluxDB.
 * Initialize tables for users, devices, and telemetry.
-* Deploy an MQTT Broker (EMQX or Mosquitto).
+* Deploy an MQTT Broker (EMQX).
 
 
-* **Phase 2: Edge Gateway Integration (RPi 1)**
-* Connect the LoRA concentrator module to RPi 1.
-* Write a Python/Go daemon that receives raw LoRA packets, appends JSON metadata, and forwards them via MQTT to RPi 2.
+* **Phase 2: Edge Gateway Integration (RPi)**
+* Connect the LoRA concentrator module to RPi.
+* Write a Python daemon that receives raw LoRA packets.
 
 
 * **Phase 3: Firmware Development (ESP32 Nodes)**
-* *LoRA Nodes:* Program ESP32 + SX1276 to format JSON telemetry and transmit via LoRA.
+* *LoRA Nodes:* Program ESP32 + SX1278 to format JSON telemetry and transmit via LoRA.
 * *Wi-Fi Nodes:* Program ESP32 water sensor to publish directly via MQTT over Wi-Fi.
-* *ESP32-CAM:* Configure video streaming via RTSP using MediaMTX on RPi 2.
+* *ESP32-CAM:* Configure video streaming via RTSP using MediaMTX on RPi.
 * *BLE Servo Node:* Implement a BLE GATT server on the ESP32 to receive encrypted rotation commands ($0^\circ$ to $180^\circ$).
 
 

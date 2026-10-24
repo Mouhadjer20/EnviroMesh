@@ -53,7 +53,7 @@ services:
     networks:
       - enviromesh
 
-  # Python API, MQTT consumer, validation, and database writer
+  # Python API, MQTT Subscriber, validation, and database writer
   backend:
     build:
       context: ./raspberry_pi/backend
@@ -90,7 +90,7 @@ services:
   # Web dashboard frontend
   dashboard:
     build:
-      context: ./dashboard
+      context: ./raspberry_pi/dashboard
       dockerfile: Dockerfile
     container_name: enviromesh-dashboard
     restart: unless-stopped
@@ -107,7 +107,7 @@ services:
     ports:
       - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
     volumes:
-      - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./raspberry_pi/infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
       - dashboard

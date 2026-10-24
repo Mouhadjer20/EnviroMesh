@@ -7,7 +7,7 @@ visualization of environmental telemetry collected from the field sensor nodes.
 ## Role in the Architecture
 
 Per the project architecture (`../README.md`), the dashboard connects to
-**RPi 2 (Core Processing Server)** over **HTTPS / WebSockets**. RPi 2 hosts the
+**RPi (Core Processing Server)** over **HTTPS / WebSockets**. RPi hosts the
 databases (PostgreSQL + TimescaleDB), the MQTT broker, the video proxy, and
 RBAC authentication. The dashboard consumes telemetry and alerts from this core
 server and presents them to operators filtered by their assigned zones and roles.
@@ -18,7 +18,7 @@ server and presents them to operators filtered by their assigned zones and roles
 - **Real-time telemetry:** Live charts of sensor readings (gas, temperature, humidity, water leak, pressure, motion) streamed via WebSockets.
 - **Zone filtering:** Users only see devices and data belonging to their assigned group/zone.
 - **Device status:** Overview of all edge nodes (G11, G41, G31, G61) with online/offline and maintenance status.
-- **Video streaming:** RTSP video proxy integration (ESP32-CAM via MediaMTX on RPi 2).
+- **Video streaming:** RTSP video proxy integration (ESP32-CAM via MediaMTX on RPi).
 - **Actuation:** Secure BLE control of the micro servo (0°–180°) on the G61 servo node.
 
 ## Directory Layout
@@ -39,7 +39,7 @@ As outlined in the project README, the dashboard is built in **Phase 4: Dashboar
 
 1. Build the web UI with email/password login.
 2. Connect Grafana or a custom React dashboard to display real-time time-series charts filtered by user roles.
-3. Integrate with the MQTT broker and WebSocket endpoints on RPi 2.
+3. Integrate with the MQTT broker and WebSocket endpoints on RPi.
 4. Enforce RBAC claims inside signed JWT tokens and topic-level permissions on the MQTT broker.
 
 ## Related Documentation

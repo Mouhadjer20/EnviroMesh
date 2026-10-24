@@ -10,7 +10,7 @@ from typing import List, Optional
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=list[dict])
 async def list_alerts(
     device_id: Optional[str] = None,
     acknowledged: Optional[bool] = None,

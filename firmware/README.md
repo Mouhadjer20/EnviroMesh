@@ -29,15 +29,15 @@ progresses.
 
 | Node | Device ID | Group | Sensors | Actuator | Protocol | Destination |
 |------|-----------|-------|---------|----------|----------|-------------|
-| `node_g11` | G11 | G1 | MQ-2 (gas/smoke), DHT11 (temp/hum), Water leak | — | LoRa 433 MHz | RPi 1 (LoRa Gateway) |
-| `node_g41` | G41 | G4 | MQ-2 (gas/smoke), DHT11 (temp/hum), Water leak | — | LoRa 433 MHz | RPi 1 (LoRa Gateway) |
-| `node_g31` | G31 | G3 | BMP280 (pressure/temp), MQ-2 (gas/smoke), Water leak | — | Wi-Fi (MQTT / TCP) | RPi 2 (Core Server) |
+| `node_g11` | G11 | G1 | MQ-2 (gas/smoke), DHT11 (temp/hum), Water leak | — | LoRa 433 MHz | RPi (LoRa Gateway) |
+| `node_g41` | G41 | G4 | MQ-2 (gas/smoke), DHT11 (temp/hum), Water leak | — | LoRa 433 MHz | RPi (LoRa Gateway) |
+| `node_g31` | G31 | G3 | BMP280 (pressure/temp), MQ-2 (gas/smoke), Water leak | — | Wi-Fi (MQTT / TCP) | RPi (Core Server) |
 | `node_g61_servo` | G61 | G6 | MQ-2 (gas/smoke), DHT11 (temp/hum), Water leak, PIR (motion) | Micro Servo 9g | Wi-Fi (MQTT / TCP) + BLE | Local Operator / RPi BLE Proxy |
 
 ## Communication Details
 
-- **LoRa nodes (G11, G41):** Transmit JSON telemetry via ESP32 + SX1276 on LoRa 433 MHz to RPi 1, which forwards to RPi 2 via MQTT.
-- **Wi-Fi nodes (G31, G61):** Publish JSON telemetry directly via MQTT over Wi-Fi/TCP to RPi 2.
+- **LoRa nodes (G11, G41):** Transmit JSON telemetry via ESP32 + SX1278 on LoRa 433 MHz to RPi, which forwards to RPi via MQTT.
+- **Wi-Fi nodes (G31, G61):** Publish JSON telemetry directly via MQTT over Wi-Fi/TCP to RPi.
 - **BLE Servo Node (G61):** Implements a BLE GATT server to receive encrypted rotation commands (0°–180°) for the micro servo.
 
 ## Security Notes
@@ -53,7 +53,7 @@ Per the project README, firmware is developed in **Phase 3: Firmware Development
 
 1. LoRa nodes: format JSON telemetry and transmit via LoRa.
 2. Wi-Fi nodes: publish telemetry directly via MQTT over Wi-Fi.
-3. ESP32-CAM: video streaming via RTSP using MediaMTX on RPi 2.
+3. ESP32-CAM: video streaming via RTSP using MediaMTX on RPi.
 4. BLE Servo Node: BLE GATT server for encrypted rotation commands.
 
 ## Related Documentation

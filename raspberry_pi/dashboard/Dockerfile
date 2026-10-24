@@ -26,15 +26,15 @@ RUN if [ -f package.json ] && { [ -f vite.config.js ] || [ -f webpack.config.js 
 FROM nginx:1.28-alpine
 
 # Copy built assets from builder (if a build folder exists)
-COPY --from=builder /app/dist /usr/share/nginx/html 2>/dev/null || true
-COPY --from=builder /app/build /usr/share/nginx/html 2>/dev/null || true
-COPY --from=builder /app/.next /usr/share/nginx/html 2>/dev/null || true
+#COPY --from=builder /app/dist /usr/share/nginx/html
+#COPY --from=builder /app/build /usr/share/nginx/html
+#COPY --from=builder /app/.next /usr/share/nginx/html
 
 # Copy a placeholder index.html if none was built
-COPY index.html /usr/share/nginx/html/index.html 2>/dev/null || true
+COPY index.html /usr/share/nginx/html/index.html
 
 # Copy nginx config if provided
-COPY default.conf /etc/nginx/conf.d/default.conf 2>/dev/null || true
+#COPY default.conf /etc/nginx/conf.d/default.config
 
 EXPOSE 80
 

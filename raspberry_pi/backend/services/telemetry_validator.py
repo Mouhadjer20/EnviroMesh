@@ -1,4 +1,4 @@
-"""Telemetry validation for RPi 2 (Core Processing Server).
+"""Telemetry validation for RPi (Core Processing Server).
 
 Validates incoming telemetry payloads against schema and range constraints
 before they are written to TimescaleDB.
@@ -34,7 +34,7 @@ def validate(telemetry: dict) -> bool:
     for metric, value in metrics.items():
         if metric in METRIC_RANGES:
             low, high = METRIC_RANGES[metric]
-            if not (low <= value <= high):
+            if not (low <= float(value) <= high):
                 logger.warning(
                     "Metric %s out of range: %s (expected %s-%s)",
                     metric,

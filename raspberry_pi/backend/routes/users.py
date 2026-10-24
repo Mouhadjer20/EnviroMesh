@@ -10,7 +10,7 @@ from typing import List, Optional
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=list[dict])
 async def list_users():
     """List all users (admin only)."""
     # TODO: Implement user listing
