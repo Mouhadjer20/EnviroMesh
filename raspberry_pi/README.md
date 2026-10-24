@@ -20,10 +20,12 @@ ESP32 Nodes (LoRa/Wi-Fi) ───► Raspberry Pi ───► Dashboard / User
        │                            │
        │  LoRa 433 MHz              │  MQTT (EMQX)  │  HTTP/WebSocket
        ▼                            ▼               ▼
-  backend/services/lora_receiver.py    backend/services/mqtt_subscriber.py  backend/main.py
-  (SX1278)                             (paho-mqtt)                          (FastAPI)
-                         backend/services/database_writer.py
-                         (psycopg2 / TimescaleDB)
+backend/services/lora_receiver.py    backend/services/mqtt_subscriber.py  backend/main.py
+   (SX1278)                             (paho-mqtt)                          (FastAPI)
+          │                                      │
+          ▼                                      ▼
+   backend/services/telemetry_validator.py ──► backend/services/database_writer.py
+                                                   (psycopg2 / TimescaleDB)
 ```
 
 ---
@@ -33,7 +35,7 @@ ESP32 Nodes (LoRa/Wi-Fi) ───► Raspberry Pi ───► Dashboard / User
 ```
 raspberry_pi/
 ├── backend/                          # Core processing server (FastAPI + MQTT consumer)
-│   ├── main.py                       # Entry point: FastAPI app + MQTT consumer loop
+│   ├── main.py                       # Entry point: FastAPI app + LoRa receiver + MQTT subscriber loop
 │   ├── requirements.txt              # Python dependencies
 │   ├── Dockerfile                    # Container image (python:3.11-slim)
 │   ├── .env                          # Environment variables (MQTT, DB, API)
@@ -48,7 +50,7 @@ raspberry_pi/
 │       ├── mqtt_subscriber.py        # Paho-MQTT client; subscribes, validates, persists
 │       ├── database_writer.py        # TimescaleDB/PostgreSQL writer (psycopg2)
 │       ├── telemetry_validator.py    # Validates telemetry metrics & ranges
-│       └── lora_receiver.py          # LoRa frame reception (SX1278)
+│       └── lora_receiver.py          # LoRa frame reception (SX1278) + validation + persistence
 │   └── auth/                         # Authentication & RBAC (docs only)
 │       └── README.md                 # Authentication documentation
 ├── dashboard/                        # Web dashboard frontend (static HTML)

@@ -1,6 +1,27 @@
+"""LoRa receiver for RPi (LoRa Gateway).
+
+Receives raw RF packets from ESP32 sensor nodes over the SX1278 (433 MHz),
+parses each frame, validates it with the backend telemetry validator, and
+persists valid readings plus raw packets to TimescaleDB via the backend
+database_writer.
+"""
+
+import json
+import logging
+import os
+import sys
+import time
+
 import spidev
 import RPi.GPIO as GPIO
-import time
+
+# Make the raspberry_pi package importable when this script is run directly.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from .telemetry_validator import validate  # noqa: E402
+from .database_writer import write_telemetry, write_raw_packet  # noqa: E402
+
+logger = logging.getLogger("lora_receiver")
 
 # ==================================================
 # CONFIGURATION
@@ -115,7 +136,7 @@ def init_lora():
     if read_register(REG_OP_MODE) != 0x85:
         raise RuntimeError("Impossible d'activer la réception LoRa.")
 
-    print("[INFO] Récepteur LoRa prêt à 433 MHz.")
+    logger.info("Récepteur LoRa prêt à 433 MHz.")
 
 
 # ==================================================
@@ -136,52 +157,102 @@ def receive_packet():
 
 
 # ==================================================
+# PROCESSING OF A RECEIVED PACKET
+# ==================================================
+
+def process_packet(raw_payload: str):
+    """Validate a LoRa packet and persist it to TimescaleDB.
+
+    The raw packet is always written for diagnostics. If the payload parses
+    as valid JSON and passes the telemetry validator, the structured reading
+    is also written to the sensor_telemetry hypertable.
+    """
+    parsed = False
+    telemetry = None
+
+    try:
+        telemetry = json.loads(raw_payload)
+        parsed = True
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("LoRa packet is not valid JSON: %s", raw_payload)
+
+    # Persist the raw packet for diagnostics / traceability.
+    device_id = telemetry.get("device_id") if isinstance(telemetry, dict) else None
+    write_raw_packet(device_id or "unknown", "LoRa", raw_payload.encode("utf-8"), parsed)
+
+    if not parsed:
+        return
+
+    # 1. Validate via backend validator.
+    if not validate(telemetry):
+        logger.warning("LoRa telemetry failed validation, discarding: %s", telemetry)
+        return
+
+    # 2. Persist to TimescaleDB via backend database_writer.
+    write_telemetry(telemetry)
+
+
+# ==================================================
 # BOUCLE PRINCIPALE
 # ==================================================
 
-try:
-    print("[INFO] Initialisation du récepteur LoRa...")
+def run():
+    """Run the LoRa receive loop until interrupted.
+
+    This is the blocking main loop: it initialises the SX1278, then polls
+    ``REG_IRQ_FLAGS`` continuously, processing every received packet through
+    :func:`process_packet`. Designed to be run in a background thread while
+    other services (e.g. the MQTT subscriber) run in the main thread.
+    """
+    logging.basicConfig(level=logging.INFO)
+    logger.info("Initialisation du récepteur LoRa...")
     init_lora()
 
-    print("[INFO] En attente des paquets ESP32...")
+    logger.info("En attente des paquets ESP32...")
 
     last_status = time.monotonic()
 
-    while True:
-        irq = read_register(REG_IRQ_FLAGS)
+    try:
+        while True:
+            irq = read_register(REG_IRQ_FLAGS)
 
-        if irq & IRQ_RX_DONE:
-            if irq & IRQ_PAYLOAD_CRC_ERROR:
-                print("[ERREUR] CRC incorrect.")
-            else:
-                print(f"[REÇU] {receive_packet()}")
+            if irq & IRQ_RX_DONE:
+                if irq & IRQ_PAYLOAD_CRC_ERROR:
+                    logger.error("CRC incorrect.")
+                else:
+                    raw = receive_packet()
+                    logger.info("Reçu: %s", raw)
+                    process_packet(raw)
 
-            # Effacer les interruptions présentes
-            write_register(REG_IRQ_FLAGS, irq)
+                # Effacer les interruptions présentes
+                write_register(REG_IRQ_FLAGS, irq)
 
-            # Reprendre la réception continue
-            write_register(REG_OP_MODE, 0x85)
+                # Reprendre la réception continue
+                write_register(REG_OP_MODE, 0x85)
 
-        elif irq & IRQ_RX_TIMEOUT:
-            write_register(REG_IRQ_FLAGS, IRQ_RX_TIMEOUT)
-            write_register(REG_OP_MODE, 0x85)
+            elif irq & IRQ_RX_TIMEOUT:
+                write_register(REG_IRQ_FLAGS, IRQ_RX_TIMEOUT)
+                write_register(REG_OP_MODE, 0x85)
 
-        if time.monotonic() - last_status >= 10:
-            print(
-                f"[ÉTAT] OP_MODE=0x{read_register(REG_OP_MODE):02X}, "
-                f"IRQ=0x{read_register(REG_IRQ_FLAGS):02X}"
-            )
-            last_status = time.monotonic()
+            if time.monotonic() - last_status >= 10:
+                logger.info(
+                    "ÉTAT OP_MODE=0x%02X, IRQ=0x%02X",
+                    read_register(REG_OP_MODE),
+                    read_register(REG_IRQ_FLAGS),
+                )
+                last_status = time.monotonic()
 
-        time.sleep(0.005)
+            time.sleep(0.005)
+    except KeyboardInterrupt:
+        logger.info("Arrêt du récepteur.")
 
-except KeyboardInterrupt:
-    print("\n[INFO] Arrêt du récepteur.")
 
-except Exception as e:
-    print(f"[ERREUR] {e}")
-
-finally:
-    spi.close()
-    GPIO.cleanup()
-    print("[INFO] Ressources libérées.")
+if __name__ == "__main__":
+    try:
+        run()
+    except Exception as e:
+        logger.error("ERREUR: %s", e)
+    finally:
+        spi.close()
+        GPIO.cleanup()
+        logger.info("Ressources libérées.")
