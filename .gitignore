@@ -234,3 +234,4 @@ node_modules/
 bin/
 tmp/
 certs/
+secrets.h
