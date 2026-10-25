@@ -1,170 +1,156 @@
-# Database Layer — Environmental Monitoring System
+# Database Layer — EnviroMesh Persistence Engine
 
-This folder contains the database artifacts for the EnviroMesh project: schema
-migrations, seed data, and verification queries.
+This directory contains the database artifacts for the EnviroMesh platform: relational schema migrations, time-series hypertables, seed data, and verification suites.
 
-The system uses a **dual-database design**:
+The system implements a **polyglot persistence architecture** hosted on PostgreSQL 16 with the TimescaleDB extension:
 
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| Registry / Metadata | **PostgreSQL** + pgcrypto | Users, groups, sensors, devices, assignments, RBAC |
-| Telemetry / Time-Series | **PostgreSQL** + **TimescaleDB** | High-frequency sensor readings, raw packets |
+| Layer | Engine | Purpose | Key Tables |
+|---|---|---|---|
+| **Control Plane & Registry** | **PostgreSQL 16** + `pgcrypto` | Relational metadata, user accounts, groups, devices, sensors, RBAC | `groups`, `users`, `sensors`, `devices`, `sensor_devices` |
+| **Telemetry Plane** | **TimescaleDB 2.17** | High-velocity time-partitioned sensor readings & raw diagnostic frames | `sensor_telemetry`, `raw_sensor_packets` |
 
-## Directory Layout
+---
+
+## 1. Directory Layout
 
 ```
-db/
-├── README.md                    # This file
+raspberry_pi/db/
 ├── migration/
-│   ├── 001_create_registry.sql  # PostgreSQL relational schema
-│   └── 001_create_telemetry.sql # TimescaleDB time-series schema
-└── seed/
-    ├── 001_seed_registry.sql    # Reference data (groups, users, devices, sensors)
-    └── 001_verify_seed_registry.sql  # Sanity-check queries after seeding
+│   ├── 001_create_registry.sql   # Relational control plane schema (UUIDs, bcrypt, constraints)
+│   └── 001_create_telemetry.sql  # TimescaleDB hypertables, partitions, and composite indexes
+├── seed/
+│   ├── 001_seed_registry.sql     # Seed data: groups G1–G7, 20+ student technician accounts, devices
+│   └── 001_verify_seed_registry.sql # Automated sanity checks and topology report
+└── README.md                     # This documentation file
 ```
 
-Migrations and seeds are numbered `001_*` and are intended to be applied in
-alphabetical order within each folder:
+---
 
-1. `migration/001_create_registry.sql`
-2. `migration/001_create_telemetry.sql`
-3. `seed/001_seed_registry.sql`
+## 2. Managing the Database with Helper Scripts
 
-## Prerequisites
-
-- **PostgreSQL 14+**
-- **pgcrypto** extension (UUID generation + bcrypt hashing)
-- **TimescaleDB** extension (required by the telemetry migration)
-
-Apply extensions before running migrations:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-```
-
-## 1. Registry Migration — `001_create_registry.sql`
-
-Creates the relational metadata schema in five tables plus supporting indexes.
-
-### Tables
-
-| Table | Description |
-|-------|-------------|
-| **groups** | Student/device groups (G1–G7). `group_code` must match `^G[1-9]$`. |
-| **users** | Zone technician / admin accounts. Passwords are hashed with bcrypt via pgcrypto. |
-| **sensors** | Sensor catalog (MQ-2, DHT11, Water Sensor, BMP280, PIR). |
-| **devices** | Physical edge nodes (e.g. `G11`, `G41`). `device_id` must match `^G[1-9][1-9]$`. |
-| **sensor_devices** | Many-to-many association between sensors and devices with JSONB configuration. |
-
-### Key Relationships
-
-```
-users.group_id      → groups.id          (ON DELETE SET NULL)
-devices.group_id    → groups.id          (ON DELETE SET NULL)
-sensor_devices.sensor_id   → sensors.id     (ON DELETE CASCADE)
-sensor_devices.device_id   → devices.device_id (ON DELETE CASCADE)
-```
-
-### Indexes
-
-- `idx_users_group_id`
-- `idx_devices_group_id`
-- `idx_sensor_devices_device_id`
-- `idx_sensor_devices_sensor_id`
-
-## 2. Telemetry Migration — `001_create_telemetry.sql`
-
-Creates the time-series layer on top of TimescaleDB.
-
-### Tables
-
-| Table | Type | Description |
-|-------|------|-------------|
-| **sensor_telemetry** | Hypertable (partitioned by `timestamp`) | Normalized readings: `device_id`, `zone`, `metrics` JSONB, `protocol`, `rssi`, metadata. |
-| **raw_sensor_packets** | Hypertable (partitioned by `received_at`) | Raw `BYTEA` payloads for diagnostics and traceability. |
-
-### Indexes
-
-- `idx_telemetry_device_time` — `(device_id, timestamp DESC)`
-- `idx_telemetry_zone_time` — `(zone, timestamp DESC)`
-
-### Example telemetry payload
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:00Z",
-  "device_id": "G11",
-  "zone": "Sector_A_Warehouse",
-  "metrics": {
-    "gas_ppm": 145.2,
-    "temperature_c": 26.4,
-    "humidity": 58.1,
-    "water_leak": false
-  },
-  "protocol": "LoRa",
-  "metadata": {
-    "group_code": "G1",
-    "firmware_version": "1.0.0"
-  }
-}
-```
-
-## 3. Seed Data — `001_seed_registry.sql`
-
-Populates the registry tables with reference data. Default user password is
-**`password123`** (hashed via `crypt`/`gen_salt('bf')`). Change all default
-passwords after first login.
-
-### Seed contents
-
-1. **Groups** — G1 through G7 (LoRa / Wi-Fi / reserved groups).
-2. **Users** — 22 student accounts (`zone_technician` role), emails derived from
-   student codes as `<code[11:]>@etu.uni-usto.dz`, assigned to groups G1–G7
-   where known (one student, LAAZ Abdelaziz Farouk, is intentionally unassigned
-   with `group_id IS NULL`).
-3. **Sensors** — MQ-2, DHT11, Water Sensor, BMP280, PIR catalog entries.
-4. **Devices** — G11, G41, G31, G61 with zones and coordinates.
-5. **Sensor-device assignments** — 14 assignments across the four devices,
-   each with a JSONB configuration describing the measurement(s).
-
-## 4. Verification — `001_verify_seed_registry.sql`
-
-Run after seeding to sanity-check the topology:
-
-- Group counts and student counts per group
-- Users and their group assignments (including unassigned users)
-- Sensor catalog listing
-
-## Applying the Database
-
-Example using `psql`:
+We provide an automated management utility: [`../../scripts/db_manage.sh`](../../scripts/db_manage.sh).
 
 ```bash
-# 1. Enable required extensions
-psql -U postgres -d enviromesh -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
-psql -U postgres -d enviromesh -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+# Complete automated setup (extensions + migrations + seed + verification + status)
+./scripts/db_manage.sh init
 
-# 2. Apply migrations
-psql -U postgres -d enviromesh -f db/migration/001_create_registry.sql
-psql -U postgres -d enviromesh -f db/migration/001_create_telemetry.sql
+# Apply only schema migrations
+./scripts/db_manage.sh migrate
 
-# 3. Load seed data
-psql -U postgres -d enviromesh -f db/seed/001_seed_registry.sql
+# Load student technicians, sensors, and device assignments
+./scripts/db_manage.sh seed
 
-# 4. Verify
-psql -U postgres -d enviromesh -f db/seed/001_verify_seed_registry.sql
+# Run verification queries and output database topology
+./scripts/db_manage.sh verify
+
+# View current row counts across all tables and hypertables
+./scripts/db_manage.sh status
+
+# Open an interactive psql session in the database container
+./scripts/db_manage.sh shell
+
+# Reset all tables and re-apply from scratch (destructive!)
+./scripts/db_manage.sh reset
 ```
 
-## Security Notes
+---
 
-- All user passwords are hashed with bcrypt (`pgcrypto`); plaintext never
-  persists in the database.
-- Default seed password `password123` must be changed after first login.
-- Telemetry tables are hypertables; retention policies should be configured
-  separately based on operational requirements (e.g. `add_retention_policy`).
+## 3. Schema Specifications
 
-## Related Documentation
+### 3.1. Relational Registry (`migration/001_create_registry.sql`)
 
-- Project architecture: [`../README.md`](../README.md)
-- Dashboard: [`../dashboard`](../dashboard)
+1. **`groups`**: Student and hardware group identifiers (`G1` through `G7`).
+   - Check constraint: `group_code ~ '^G[1-9]$'`.
+2. **`users`**: Platform user accounts.
+   - Roles: `'admin'`, `'zone_technician'`.
+   - Passwords: Encrypted using bcrypt via `pgcrypto` (`crypt(password, gen_salt('bf'))`).
+   - `group_id`: Foreign key referencing `groups.id`.
+3. **`sensors`**: Canonical hardware catalog.
+   - Catalog entries: `MQ-2`, `DHT11`, `Water Sensor`, `BMP280`, `PIR`.
+4. **`devices`**: Physical edge nodes.
+   - Device IDs enforce naming regex: `device_id ~ '^G[1-9][1-9]$'` (e.g. `G11`, `G41`, `G31`, `G61`).
+   - Stores deployment zone and geographic coordinates (`latitude`, `longitude`).
+5. **`sensor_devices`**: Many-to-many link between hardware sensors and physical devices.
+   - Enforces unique assignment: `UNIQUE (sensor_id, device_id)`.
+   - Status tracking: `'active'`, `'inactive'`, `'maintenance'`.
+   - `configuration`: JSONB column defining measurement capabilities (e.g. `{"measurement": "gas_and_smoke"}`).
+
+### 3.2. Time-Series Telemetry (`migration/001_create_telemetry.sql`)
+
+1. **`sensor_telemetry`** (Hypertable):
+   - Partitioned by range on `timestamp` (`SELECT create_hypertable('sensor_telemetry', by_range('timestamp'))`).
+   - Stores device identifier, deployment zone, `metrics` JSONB document, protocol, reception timestamp, and RSSI.
+   - Composite indexes:
+     - `idx_telemetry_device_time` on `(device_id, timestamp DESC)` for fast device trendlines.
+     - `idx_telemetry_zone_time` on `(zone, timestamp DESC)` for zone-wide technician dashboards.
+2. **`raw_sensor_packets`** (Hypertable):
+   - Partitioned on `received_at`.
+   - Stores the exact `BYTEA` payload of every frame received over LoRa or MQTT before decoding.
+   - Maintains traceability: `parsed` boolean flag and `parse_error` diagnostic string.
+
+---
+
+## 4. Seed Data & Reference Accounts (`seed/001_seed_registry.sql`)
+
+- **Default User Password:** **`password123`** (hashed with bcrypt).
+- **Technician Accounts:** 20+ accounts provisioned for university student technicians with email format `<student_code>@etu.uni-usto.dz`.
+- **Pre-configured Devices:**
+  - `G11`: Sector A Warehouse (LoRa — Group 1) ➔ MQ-2, DHT11, Water Sensor.
+  - `G41`: Sector B Warehouse (LoRa — Group 4) ➔ MQ-2, DHT11, Water Sensor.
+  - `G31`: Sector C Utility Room (Wi-Fi — Group 3) ➔ BMP280, MQ-2, Water Sensor.
+  - `G61`: Sector A Valve (Wi-Fi / BLE — Group 6) ➔ MQ-2, DHT11, Water Sensor, PIR Motion.
+
+---
+
+## 5. Implementation Roadmap (Future Database Phases)
+
+### Phase 4: Alerts Schema & Event Auditing
+- [ ] Create `002_create_alerts.sql` migration:
+  ```sql
+  CREATE TABLE IF NOT EXISTS alerts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      device_id VARCHAR(3) REFERENCES devices(device_id) ON DELETE CASCADE,
+      zone VARCHAR(255) NOT NULL,
+      alert_type VARCHAR(50) NOT NULL, -- 'GAS_LEAK', 'WATER_LEAK', 'HIGH_TEMP'
+      severity VARCHAR(20) NOT NULL DEFAULT 'WARNING', -- 'INFO', 'WARNING', 'CRITICAL'
+      message TEXT NOT NULL,
+      metric_value DOUBLE PRECISION,
+      threshold_value DOUBLE PRECISION,
+      acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+      acknowledged_by UUID REFERENCES users(id),
+      acknowledged_at TIMESTAMPTZ
+  );
+  ```
+
+### Phase 4: TimescaleDB Downsampling & Continuous Aggregates
+- [ ] Create materialized continuous aggregates for 1-minute and 1-hour downsampling:
+  ```sql
+  CREATE MATERIALIZED VIEW IF NOT EXISTS telemetry_hourly
+  WITH (timescaledb.continuous) AS
+  SELECT
+      time_bucket('1 hour', timestamp) AS bucket,
+      device_id,
+      AVG((metrics->>'temperature_c')::numeric) AS avg_temp,
+      MAX((metrics->>'temperature_c')::numeric) AS max_temp,
+      AVG((metrics->>'gas_ppm')::numeric) AS avg_gas,
+      MAX((metrics->>'gas_ppm')::numeric) AS max_gas
+  FROM sensor_telemetry
+  GROUP BY bucket, device_id;
+  ```
+
+### Phase 5: Retention Policies & Archiving
+- [ ] Configure automatic data tiering:
+  ```sql
+  SELECT add_retention_policy('sensor_telemetry', INTERVAL '90 days');
+  SELECT add_retention_policy('raw_sensor_packets', INTERVAL '14 days');
+  ```
+
+---
+
+## 6. Related Documentation
+
+- Project Root Architecture: [README.md](../../README.md)
+- Raspberry Pi Overview: [raspberry_pi/README.md](../README.md)
+- Backend Ingestion: [backend/README.md](../backend/README.md)
+- Automation Scripts: [scripts/README.md](../../scripts/README.md)

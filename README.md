@@ -18,13 +18,17 @@ This document outlines the complete architectural blueprint for a secure, scalab
 
 The network is divided into field sensor nodes, edge gateways, core servers, and user dashboards.
 
-| Component | Hardware / Sensors | Communication Protocol | Target Destination | Role & Justification |
-| --- | --- | --- | --- | --- |
-| **ESP32 Node 1** (Group 1= G1) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
-| **ESP32 Node 2** (G4) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor | LoRA (433 MHz) | RPi (LoRA Gateway) | Long-range, low-power outdoor/industrial telemetry. |
-| **ESP32 Node 3** (G3) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | RPi (Core Server) | Direct IP telemetry for local infrastructural nodes. |
-| **ESP32 Servo Node** (G6) | MQ2 (Gas), DHT11 (Temp/Hum), Water sensor, Micro Servo 9g, RIP sensor | Wi-Fi (MQTT / TCP) | Local Operator / RPi BLE Proxy | Short-range secure valve/latch actuation. |
-| **Raspberry Pi** | Core Processing Server | HTTPS / WebSockets | User Dashboard | Core Server: hosts databases, MQTT broker, video proxy, and RBAC auth, LoRA Concentrator (SX1278), translates RF LoRA frames into structured JSON/MQTT packets. |
+| Component | Source File / Module | Hardware / Sensors | Protocol | Destination | Status |
+| --- | --- | --- | --- | --- | --- |
+| **ESP32 Node 1 (G11)** | [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino) | MQ-2 (LPG model + NVS $R_0$), DHT11, Water sensor | LoRa (433 MHz) | RPi (LoRa Gateway) | **Production-Ready** |
+| **ESP32 Node 2 (G41)** | [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) | MQ-2, DHT11, Water sensor | LoRa (433 MHz) | RPi (LoRa Gateway) | **Production-Ready** |
+| **ESP32 Node 3 (G31)** | [`firmware/nodes/node_g31/src/main.ini`](firmware/nodes/node_g31/src/main.ini) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Phase 3.1 Stub |
+| **ESP32 Servo Node (G61)** | [`firmware/nodes/node_g61_servo/src/main.ini`](firmware/nodes/node_g61_servo/src/main.ini) | MQ-2, DHT11, Water, PIR, 9g Micro Servo | Wi-Fi MQTT + BLE | EMQX + Local Operator | Phase 3.2 Stub |
+| **Test Node G42** | [`firmware/nodes/node_g42/src/main/main.ino`](firmware/nodes/node_g42/src/main/main.ino) | Wi-Fi Station + PubSubClient | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Test Harness |
+| **Test Node G43** | [`firmware/nodes/node_g43/src/main/main.ino`](firmware/nodes/node_g43/src/main/main.ino) | Schema-Compliant Telemetry Publisher | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Test Harness |
+| **ESP-NOW to LoRa Bridge** | [`my_files/esp_now_LoRa/esp_now_LoRa.ino`](my_files/esp_now_LoRa/esp_now_LoRa.ino) | Dual-Radio Gateway Bridge | ESP-NOW ➔ LoRa | RPi (LoRa Gateway) | Working Prototype |
+| **ESP-NOW Sensor Node** | [`my_files/sensor_esp_now/sensor_esp_now.ino`](my_files/sensor_esp_now/sensor_esp_now.ino) | 32-byte Binary Sensor Transmitter | ESP-NOW (Ch 1) | ESP-NOW Bridge Node | Working Prototype |
+| **Raspberry Pi Gateway & Core** | [`raspberry_pi/`](raspberry_pi/) | SX1278 SPI, EMQX Broker, TimescaleDB, FastAPI, Nginx | HTTPS, WSS, MQTT, SPI | User Dashboard & Admin | **Core Operational** |
 
 ---
 
@@ -600,54 +604,109 @@ To validate system robustness, your team should execute these simulated security
 
 ---
 
-## 7. Implementation Roadmap for the Team
+## 7. Developer Automation & Helper Scripts (`scripts/`)
 
-* **Phase 1: Core Server & Database Setup (RPi)**
-* Install PostgreSQL and TimescaleDB/InfluxDB.
-* Initialize tables for users, devices, and telemetry.
-* Deploy an MQTT Broker (EMQX).
+To streamline testing, deployment, and validation without needing manual complex commands, the project includes an automated toolchain in [`scripts/`](scripts/):
 
+| Script | Purpose | Example Usage |
+|---|---|---|
+| [`setup_env.sh`](scripts/setup_env.sh) | Sets up `.env`, directory structure, permissions, and Python virtual environment | `./scripts/setup_env.sh` |
+| [`docker_control.sh`](scripts/docker_control.sh) | Controls the entire container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) | `./scripts/docker_control.sh start` |
+| [`db_manage.sh`](scripts/db_manage.sh) | Manages PostgreSQL & TimescaleDB migrations, seeds, verification, and `psql` shell | `./scripts/db_manage.sh init` |
+| [`simulate_telemetry.py`](scripts/simulate_telemetry.py) | Generates and publishes synthetic sensor readings over MQTT with anomaly injection | `./scripts/simulate_telemetry.py --device G11 --interval 2.0` |
+| [`mqtt_monitor.py`](scripts/mqtt_monitor.py) | Real-time terminal telemetry monitor subscribing to `enviromesh/#` | `./scripts/mqtt_monitor.py` |
+| [`check_health.py`](scripts/check_health.py) | Diagnostic tool testing Nginx, FastAPI backend, EMQX broker, and TimescaleDB | `./scripts/check_health.py` |
+| [`lora_packet_inject.py`](scripts/lora_packet_inject.py) | Tests the LoRa packet processing pipeline without physical SX1278 hardware | `./scripts/lora_packet_inject.py --device G11` |
 
-* **Phase 2: Edge Gateway Integration (RPi)**
-* Connect the LoRA concentrator module to RPi.
-* Write a Python daemon that receives raw LoRA packets.
+Full documentation for each script is available in [`scripts/README.md`](scripts/README.md).
 
+---
 
-* **Phase 3: Firmware Development (ESP32 Nodes)**
-* *LoRA Nodes:* Program ESP32 + SX1278 to format JSON telemetry and transmit via LoRA.
-* *Wi-Fi Nodes:* Program ESP32 water sensor to publish directly via MQTT over Wi-Fi.
-* *ESP32-CAM:* Configure video streaming via RTSP using MediaMTX on RPi.
-* *BLE Servo Node:* Implement a BLE GATT server on the ESP32 to receive encrypted rotation commands ($0^\circ$ to $180^\circ$).
+## 8. Implementation Roadmap & Phase Status
 
+### Phase 1: Core Server & Database Setup (RPi) — [COMPLETED]
+- [x] Docker Compose stack definition (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`).
+- [x] Relational metadata schema (`groups`, `users`, `sensors`, `devices`, `sensor_devices`).
+- [x] TimescaleDB hypertables (`sensor_telemetry`, `raw_sensor_packets`) with optimized time/device indexes.
+- [x] Seed data provisioning: groups G1–G7, 20+ student technician accounts, and 14 device-sensor assignments.
 
-* **Phase 4: Dashboard & Security Layer**
-* Build the web UI with email/password login.
-* Connect Grafana or a custom React dashboard to display real-time time-series charts filtered by user roles.
+### Phase 2: Edge Gateway & Ingestion Services (RPi) — [COMPLETED]
+- [x] Paho-MQTT subscriber daemon subscribing to `enviromesh/devices/+/telemetry` (`services/mqtt_subscriber.py`).
+- [x] Hardware SPI LoRa frame receiver for SX1278 (`services/lora_receiver.py`).
+- [x] Telemetry schema validation and range boundary checks (`services/telemetry_validator.py`).
+- [x] Multi-threaded concurrent ingestion loop in `main.py`.
+- [x] Reverse proxy configuration routing `/` to dashboard and `/api/` to backend (`infrastructure/nginx/default.conf`).
 
-## 8. Start EnviroMesh
+### Phase 3: Field Firmware Development (ESP32 Nodes) — [PARTIAL / IN PROGRESS]
+- [x] **Node G11 (Group 1 LoRa):** Implemented in [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino) with MQ-2 LPG regression, clean-air NVS calibration, DHT11, and Ra-02 LoRa transceiver.
+- [x] **Node G41 (Group 4 LoRa):** Implemented in [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) with MQ-2, DHT11, and Water sensor.
+- [x] **Test Nodes G42 & G43 (Wi-Fi MQTT):** Implemented in [`firmware/nodes/node_g42/`](firmware/nodes/node_g42/) and [`firmware/nodes/node_g43/`](firmware/nodes/node_g43/).
+- [x] **ESP-NOW to LoRa Dual-Radio Bridge:** Prototyped in [`my_files/esp_now_LoRa/`](my_files/esp_now_LoRa/) and [`my_files/sensor_esp_now/`](my_files/sensor_esp_now/).
+- [ ] **Node G31 (Group 3 Wi-Fi):** Finalize BMP280 barometric pressure and MQ-2 acquisition over Wi-Fi MQTT.
+- [ ] **Node G61 (Group 6 Servo):** Finalize Micro Servo 9g PWM control, PIR motion interrupt, and BLE GATT server for local actuation.
 
+### Phase 4: API Routes, Security Layer & Web Dashboard — [IN PROGRESS / UPCOMING]
+- [ ] Connect FastAPI routes to database:
+  - `routes/devices.py`: Query `devices` and `sensor_devices` tables.
+  - `routes/telemetry.py`: Query `sensor_telemetry` hypertable (`start`, `end`, `limit`) and latest readings.
+  - `routes/alerts.py`: Automatic threshold alerts (e.g. `gas_ppm > 2000` or `water_leak == 1`).
+  - `routes/users.py`: User profile management.
+- [ ] Implement JWT Authentication & RBAC in `backend/auth/` (email/password verification against bcrypt hashes).
+- [ ] Build interactive Web Dashboard with dynamic time-series charts (Chart.js / React) and zone filtering.
+- [ ] Configure EMQX topic ACLs (`acl.conf`) to enforce zone-scoped permissions.
+
+### Phase 5: Hardware Field Testing & Video Subsystem — [UPCOMING]
+- [ ] Deploy MediaMTX RTSP proxy on RPi for ESP32-CAM video capture.
+- [ ] Field range testing: evaluate LoRa 433 MHz link budget, RSSI, and SNR from 100m to 1km.
+- [ ] Power optimization: implement ESP32 deep-sleep cycles on battery-powered sensor nodes.
+- [ ] Systemd service provisioning for unattended gateway auto-start.
+
+---
+
+## 9. Quick Start Guide
+
+### Step 1: Initialize Workspace & Environment
 ```bash
-# Create your private environment file
-cp .env.example .env
-chmod 600 .env
-
-# Edit passwords and network settings
-nano .env
-
-# Validate the Compose configuration
-docker compose config
-
-# Start the services
-docker compose up -d
-
-# Check service status and logs
-docker compose ps
-docker compose logs -f emqx timescaledb
+# Clone the repository and run the setup script:
+./scripts/setup_env.sh
 ```
 
-## 8. Resources
-1. [IoT Architecture](https://www.kaaiot.com/iot-knowledge-base/visualizing-iot-architecture-with-diagrams)
-2. [IoT communication models](https://www.kaaiot.com/iot-knowledge-base/iot-communication-models-overview-types-use-cases-and-implementation-strategies)
-3. [What is IoT architecture?](https://www.kaaiot.com/iot-knowledge-base/what-is-iot-architecture)
-4. [Tool for esp connection PINs](https://fritzing.org)
-5. [Tool for IoT Architecture](https://app.diagrams.net/)
+### Step 2: Launch the Docker Stack
+```bash
+./scripts/docker_control.sh start
+```
+
+### Step 3: Initialize & Seed the Database
+```bash
+./scripts/db_manage.sh init
+```
+
+### Step 4: Verify Stack Health
+```bash
+./scripts/check_health.py
+```
+
+### Step 5: Simulate Telemetry & Monitor Live Stream
+Open two terminal windows:
+```bash
+# Terminal 1: Monitor live MQTT traffic
+./scripts/mqtt_monitor.py
+
+# Terminal 2: Emit simulated sensor readings
+./scripts/simulate_telemetry.py --device all --interval 1.5
+```
+
+Access the web interface at **`http://localhost:8080`** and the EMQX console at **`http://localhost:18083`** (`admin`).
+
+---
+
+## 10. Resources & References
+
+1. [IoT Architecture Visualization](https://www.kaaiot.com/iot-knowledge-base/visualizing-iot-architecture-with-diagrams)
+2. [IoT Communication Models Overview](https://www.kaaiot.com/iot-knowledge-base/iot-communication-models-overview-types-use-cases-and-implementation-strategies)
+3. [TimescaleDB Documentation](https://docs.timescale.com/)
+4. [EMQX 5 Broker Documentation](https://www.emqx.io/docs/en/latest/)
+5. [FastAPI Documentation](https://fastapi.tiangolo.com/)
+6. [Fritzing Wiring Tool](https://fritzing.org)
+7. [Diagrams.net Architecture Tool](https://app.diagrams.net/)
+8. [MQTT Tutorial for Beginners](https://www.youtube.com/watch?v=kuyCd53AOtg)
