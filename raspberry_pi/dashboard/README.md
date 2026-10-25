@@ -4,6 +4,23 @@ The dashboard is the user-facing web interface for the **EnviroMesh** environmen
 
 ---
 
+## Table of Contents
+
+- [1. Role in the Architecture](#1-role-in-the-architecture)
+- [2. Directory Layout & Current Implementation](#2-directory-layout--current-implementation)
+  - [Current Status (`index.html`)](#current-status-indexhtml)
+- [3. Implementation Roadmap (Phase 4: Dashboard & UI)](#3-implementation-roadmap-phase-4-dashboard--ui)
+  - [1. Authentication & Session Management](#1-authentication--session-management)
+  - [2. Live Telemetry & Dynamic Charts](#2-live-telemetry--dynamic-charts)
+  - [3. Actuator Control & Remote Triggering](#3-actuator-control--remote-triggering)
+  - [4. Video Subsystem Integration (Phase 5)](#4-video-subsystem-integration-phase-5)
+- [4. Building & Running](#4-building--running)
+  - [Running in Docker](#running-in-docker)
+  - [Local Frontend Development](#local-frontend-development)
+- [5. Related Documentation](#5-related-documentation)
+
+---
+
 ## 1. Role in the Architecture
 
 The dashboard is served by Nginx and exposed through the central **EnviroMesh Gateway Reverse Proxy** on port **`8080`**:

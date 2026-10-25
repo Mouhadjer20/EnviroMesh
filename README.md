@@ -8,6 +8,31 @@
 
 ---
 
+## Table of Contents
+
+- [1. Executive Summary & System Overview](#1-executive-summary--system-overview)
+- [2. Hardware Topology & Communication Matrix](#2-hardware-topology--communication-matrix)
+- [3. Revised System Topology Diagram](#3-revised-system-topology-diagram)
+- [4. Database Architecture (Polyglot Persistence)](#4-database-architecture-polyglot-persistence)
+  - [Database 1: SQL (PostgreSQL) — Control Plane & Metadata](#database-1-sql-postgresql--control-plane--metadata)
+  - [Database 2: Time-Series (TimescaleDB) — Telemetry Plane](#database-2-time-series-timescaledb--telemetry-plane)
+- [5. Standardized Data Provenance & Payload Structure](#5-standardized-data-provenance--payload-structure)
+  - [5.1. Standard Payload Contract](#51-standard-payload-contract)
+  - [5.2. Sensor Catalog and Metric Naming](#52-sensor-catalog-and-metric-naming)
+  - [5.3. Future Sensor Expansion](#53-future-sensor-expansion)
+  - [5.4. TimescaleDB Integration](#54-timescaledb-integration)
+  - [5.5. Data Provenance and Security Requirements](#55-data-provenance-and-security-requirements)
+  - [5.6. Backend Directory Structure (Python/FastAPI)](#56-backend-directory-structure-pythonfastapi)
+- [6. Security Architecture & Access Control](#6-security-architecture--access-control-next-phase-not-including-in-this-phase-of-deployment-db-and-installation-devices)
+  - [A. Authentication & RBAC](#a-authentication--rbac)
+  - [B. Simulated Attack Vectors & Defensive Engineering](#b-simulated-attack-vectors--defensive-engineering)
+- [7. Developer Automation & Helper Scripts (`scripts/`)](#7-developer-automation--helper-scripts-scripts)
+- [8. Implementation Roadmap & Phase Status](#8-implementation-roadmap--phase-status)
+- [9. Quick Start Guide](#9-quick-start-guide)
+- [10. Resources & References](#10-resources--references)
+
+---
+
 ## 1. Executive Summary & System Overview
 
 This document outlines the complete architectural blueprint for a secure, scalable, and polyglot IoT platform. The system integrates multiple communication protocols (**LoRA, Wi-Fi, BLE, Ethernet, MQTT, RTSP, HTTPS**) to handle environmental monitoring, video streaming, and local actuation, backed by a dual-database design (**SQL** for management/metadata and **NoSQL/Time-Series** for high-frequency telemetry) with strict **Role-Based Access Control (RBAC)**.
@@ -18,17 +43,15 @@ This document outlines the complete architectural blueprint for a secure, scalab
 
 The network is divided into field sensor nodes, edge gateways, core servers, and user dashboards.
 
-| Component | Source File / Module | Hardware / Sensors | Protocol | Destination | Status |
-| --- | --- | --- | --- | --- | --- |
-| **ESP32 Node 1 (G11)** | [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino) | MQ-2 (LPG model + NVS $R_0$), DHT11, Water sensor | LoRa (433 MHz) | RPi (LoRa Gateway) | **Production-Ready** |
-| **ESP32 Node 2 (G41)** | [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) | MQ-2, DHT11, Water sensor | LoRa (433 MHz) | RPi (LoRa Gateway) | **Production-Ready** |
-| **ESP32 Node 3 (G31)** | [`firmware/nodes/node_g31/src/main.ini`](firmware/nodes/node_g31/src/main.ini) | BMP280, MQ-2, Water sensor | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Phase 3.1 Stub |
-| **ESP32 Servo Node (G61)** | [`firmware/nodes/node_g61_servo/src/main.ini`](firmware/nodes/node_g61_servo/src/main.ini) | MQ-2, DHT11, Water, PIR, 9g Micro Servo | Wi-Fi MQTT + BLE | EMQX + Local Operator | Phase 3.2 Stub |
-| **Test Node G42** | [`firmware/nodes/node_g42/src/main/main.ino`](firmware/nodes/node_g42/src/main/main.ino) | Wi-Fi Station + PubSubClient | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Test Harness |
-| **Test Node G43** | [`firmware/nodes/node_g43/src/main/main.ino`](firmware/nodes/node_g43/src/main/main.ino) | Schema-Compliant Telemetry Publisher | Wi-Fi (MQTT / TCP) | EMQX Broker (`:1883`) | Test Harness |
-| **ESP-NOW to LoRa Bridge** | [`my_files/esp_now_LoRa/esp_now_LoRa.ino`](my_files/esp_now_LoRa/esp_now_LoRa.ino) | Dual-Radio Gateway Bridge | ESP-NOW ➔ LoRa | RPi (LoRa Gateway) | Working Prototype |
-| **ESP-NOW Sensor Node** | [`my_files/sensor_esp_now/sensor_esp_now.ino`](my_files/sensor_esp_now/sensor_esp_now.ino) | 32-byte Binary Sensor Transmitter | ESP-NOW (Ch 1) | ESP-NOW Bridge Node | Working Prototype |
-| **Raspberry Pi Gateway & Core** | [`raspberry_pi/`](raspberry_pi/) | SX1278 SPI, EMQX Broker, TimescaleDB, FastAPI, Nginx | HTTPS, WSS, MQTT, SPI | User Dashboard & Admin | **Core Operational** |
+| Component                       | Source File / Module                                                                       | Hardware / Sensors                                   | Protocol              | Destination            | Status               |
+| ------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------- | --------------------- | ---------------------- | -------------------- |
+| **ESP32 Node 1 (G11)**          | [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino)             | MQ-2 (LPG model + NVS $R_0$), DHT11, Water sensor    | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
+| **ESP32 Node 2 (G41)**          | [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino)   | MQ-2, DHT11, Water sensor                            | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
+| **ESP32 Node 3 (G31)**          | [`firmware/nodes/node_g31/src/main.ini`](firmware/nodes/node_g31/src/main.ini)             | BMP280, MQ-2, Water sensor                           | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Phase 3.1 Stub       |
+| **ESP32 Servo Node (G61)**      | [`firmware/nodes/node_g61_servo/src/main.ini`](firmware/nodes/node_g61_servo/src/main.ini) | MQ-2, DHT11, Water, PIR, 9g Micro Servo              | Wi-Fi MQTT + BLE      | EMQX + Local Operator  | Phase 3.2 Stub       |
+| **Test Node G42**               | [`firmware/nodes/node_g42/src/main/main.ino`](firmware/nodes/node_g42/src/main/main.ino)   | Wi-Fi Station + PubSubClient                         | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
+| **Test Node G43**               | [`firmware/nodes/node_g43/src/main/main.ino`](firmware/nodes/node_g43/src/main/main.ino)   | Schema-Compliant Telemetry Publisher                 | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
+| **Raspberry Pi Gateway & Core** | [`raspberry_pi/`](raspberry_pi/)                                                           | SX1278 SPI, EMQX Broker, TimescaleDB, FastAPI, Nginx | HTTPS, WSS, MQTT, SPI | User Dashboard & Admin | **Core Operational** |
 
 ---
 
@@ -166,15 +189,18 @@ Stores user identities, password hashes, RBAC permissions, and the physical asse
   * `configuration` (JSONB, optional — sensor-specific settings)
   * `UNIQUE(sensor_id, device_id)` — prevents duplicate sensor-device assignments
 
-### Database 2: NoSQL / Time-Series (TimescaleDB) — *Telemetry Plane*
+### Database 2: Time-Series (TimescaleDB) — *Telemetry Plane*
 
 Stores high-frequency sensor readings, timestamps, and unstructured raw packets to prevent database bloat and optimize time-based queries.
 
 * **Document / Table Schema (`sensor_telemetry`):**
-* `timestamp` (Epoch / DateTime, Indexed)
+* `timestamp` (DateTime, Indexed)
 * `device_id` (VARCHAR)
 * `zone` (VARCHAR)
 * `metrics` (JSON object containing dynamic keys like `gas_ppm`, `temperature_c`, `humidity`, `water_leak`)
+* `received_at` (DateTime)
+* `protocol` 
+* `metadata` (JSON Object containing static information about device like `group_code`, `firmware_version`, `sensor_id`, `device_id`)
 
 
 
@@ -227,174 +253,23 @@ The database registry remains authoritative for device ownership and location. D
 
 ---
 
-### 5.2. ESP32 Node 1 — Group G1
-
-**Hardware:** MQ-2, DHT11, Water Sensor  
-**Communication:** LoRa at 433 MHz  
-**Destination:** Raspberry Pi
-**Device ID:** `G11` (example)
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:00Z",
-  "device_id": "G11",
-  "group_code": "G1",
-  "zone": "Sector_A_Warehouse",
-  "protocol": "lora",
-  "metrics": {
-    "gas_ppm": 42.5,
-    "smoke_detected": false,
-    "temperature_c": 23.8,
-    "humidity_pct": 55.2,
-    "water_leak_detected": false
-  },
-  "status": {
-    "battery_voltage": 3.72,
-    "rssi_dbm": -85,
-    "snr_db": 7.2
-  }
-}
-```
-
-*Note: The gateway may need to append RSSI and SNR because these measurements are obtained by the receiving radio rather than necessarily by the transmitting ESP32.*
-
-### 5.3. ESP32 Node 2 — Group G4
-
-**Hardware:** MQ-2, DHT11, Water Sensor  
-**Communication:** LoRa at 433 MHz  
-**Destination:** Raspberry Pi
-**Device ID:** `G41` (example)
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:01Z",
-  "device_id": "G41",
-  "group_code": "G4",
-  "zone": "Sector_B_Warehouse",
-  "protocol": "lora",
-  "metrics": {
-    "gas_ppm": 38.1,
-    "smoke_detected": false,
-    "temperature_c": 24.1,
-    "humidity_pct": 52.7,
-    "water_leak_detected": false
-  },
-  "status": {
-    "battery_voltage": 3.68,
-    "rssi_dbm": -78,
-    "snr_db": 8.4
-  }
-}
-```
-
-### 5.4. ESP32 Node 3 — Group G3
-
-**Hardware:** BMP280, MQ-2, Water Sensor  
-**Communication:** Wi-Fi / MQTT over TCP  
-**Destination:** Raspberry Pi
-**Device ID:** `G31` (example)
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:02Z",
-  "device_id": "G31",
-  "group_code": "G3",
-  "zone": "Sector_C_Utility_Room",
-  "protocol": "wifi_mqtt",
-  "metrics": {
-    "pressure_hpa": 1013.25,
-    "bmp280_temperature_c": 24.6,
-    "gas_ppm": 35.4,
-    "smoke_detected": false,
-    "water_leak_detected": false
-  },
-  "status": {
-    "wifi_rssi_dbm": -62,
-    "uptime_seconds": 45120
-  }
-}
-```
-
-*Note: BMP280 measures pressure and temperature, not humidity. MQ-2 gas readings are often raw or calibrated estimates; only label them `gas_ppm` when your calibration supports that unit.*
-
-### 5.5. ESP32 Servo Node — Group G6
-
-**Hardware:** MQ-2, DHT11, Water Sensor, PIR, Micro Servo 9g  
-**Communication:** Wi-Fi / MQTT over TCP  
-**Destination:** Raspberry Pi
-**Device ID:** `G61` (example)
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:03Z",
-  "device_id": "G61",
-  "group_code": "G6",
-  "zone": "Sector_A_Valve",
-  "protocol": "wifi_mqtt",
-  "metrics": {
-    "gas_ppm": 40.2,
-    "smoke_detected": false,
-    "temperature_c": 25.1,
-    "humidity_pct": 57.0,
-    "water_leak_detected": false,
-    "motion_detected": true,
-    "servo_current_angle_deg": 90,
-    "servo_target_angle_deg": 90,
-    "servo_operation_status": "position_reached"
-  },
-  "status": {
-    "wifi_rssi_dbm": -60,
-    "uptime_seconds": 45150
-  }
-}
-```
-
-Servo commands and acknowledgments should preferably use separate MQTT topics, rather than treating every actuator command as a sensor reading. The application should validate commands and enforce role-based permissions before allowing physical actuation.
-
-### 5.6. Optional ESP32-CAM
-
-The ESP32-CAM was not included in the current hardware and sensor tables. If you add it later, use a separate camera-status message and keep the video stream itself outside the telemetry database.
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:04Z",
-  "device_id": "G62",
-  "group_code": "G6",
-  "zone": "Main_Gate",
-  "protocol": "wifi_mqtt",
-  "metrics": {
-    "stream_active": true,
-    "stream_id": "gate_cam",
-    "resolution": "640x480",
-    "fps": 15
-  },
-  "status": {
-    "camera_state": "online"
-  }
-}
-```
-
-`G62` is an illustrative identifier, not an assigned device. Register it in `devices` before accepting its messages. The stream URL should be managed by the core server instead of being trusted from the camera payload.
-
----
-
-### 5.7. Sensor Catalog and Metric Naming
+### 5.2. Sensor Catalog and Metric Naming
 
 Use the `sensors` table to maintain the canonical hardware catalog. Keep the JSON metric keys consistent across firmware versions.
 
-| Sensor catalog name | Standardized metric keys |
-|---|---|
-| `MQ-2` | `gas_ppm`, `smoke_detected` |
-| `DHT11` | `temperature_c`, `humidity_pct` |
-| `Water Sensor` | `water_leak_detected` |
-| `BMP280` | `pressure_hpa`, `bmp280_temperature_c` |
-| `PIR` | `motion_detected` |
+| Sensor catalog name | Standardized metric keys               |
+| ------------------- | -------------------------------------- |
+| `MQ-2`              | `gas_ppm`, `smoke_detected`            |
+| `DHT11`             | `temperature_c`, `humidity_pct`        |
+| `Water Sensor`      | `water_leak_detected`                  |
+| `BMP280`            | `pressure_hpa`, `bmp280_temperature_c` |
+| `PIR`               | `motion_detected`                      |
 
 These are example metric conventions; your firmware must define the actual measurement semantics and units. The water sensor may provide only a wet/dry state, not a water level. The MQ-2 does not automatically provide reliable calibrated ppm values.
 
 ---
 
-### 5.8. Future Sensor Expansion
+### 5.3. Future Sensor Expansion
 
 Future projects can use the same top-level contract without changing the database table structure.
 
@@ -428,19 +303,19 @@ These are extension examples, not sensors currently registered in the catalog. A
 
 ---
 
-### 5.9. TimescaleDB Integration
+### 5.4. TimescaleDB Integration
 
 The standardized envelope maps to the `sensor_telemetry` table as follows:
 
-| Payload field | Database field |
-|---|---|
-| `timestamp` | `timestamp` (`TIMESTAMPTZ`) |
-| `device_id` | `device_id` (`VARCHAR(3)`) |
-| `zone` | `zone` (`VARCHAR`) |
-| `metrics` | `metrics` (`JSONB`) |
-| `protocol` | `protocol` (`VARCHAR`) |
-| `status` | `metadata` (`JSONB`), or a dedicated status structure |
-| Server ingestion time | `received_at` (`TIMESTAMPTZ`) |
+| Payload field         | Database field                                        |
+| --------------------- | ----------------------------------------------------- |
+| `timestamp`           | `timestamp` (`TIMESTAMPTZ`)                           |
+| `device_id`           | `device_id` (`VARCHAR(3)`)                            |
+| `zone`                | `zone` (`VARCHAR`)                                    |
+| `metrics`             | `metrics` (`JSONB`)                                   |
+| `protocol`            | `protocol` (`VARCHAR`)                                |
+| `status`              | `metadata` (`JSONB`), or a dedicated status structure |
+| Server ingestion time | `received_at` (`TIMESTAMPTZ`)                         |
 
 The `group_code` can be resolved to the relational group registry during ingestion. If you need it directly in telemetry queries, it can also be stored as denormalized metadata.
 
@@ -450,7 +325,7 @@ With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JS
 
 ---
 
-### 5.10. Data Provenance and Security Requirements
+### 5.5. Data Provenance and Security Requirements
 
 1. **Device registration:** Reject telemetry from unregistered device IDs.
 2. **Group consistency:** Verify that the device belongs to the group associated with its registry record.
@@ -463,20 +338,19 @@ With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JS
 
 This standardized schema provides a consistent foundation for the four registered ESP32 node types, the two Raspberry Pi processing layers, and future sensor extensions.
 
-### 5.11. Backend Directory Structure (Python/FastAPI)
+### 5.6. Backend Directory Structure (Python/FastAPI)
 
 The core server backend was restructured into `raspberry_pi/backend/` with a
 clean separation between API routes, business services, and infrastructure.
 
-#### 5.11.1. Python Package Layout
+#### 5.6.1. Python Package Layout
 
 ```
 raspberry_pi/backend/
 ├── main.py                       # Entry point: FastAPI app + MQTT subscriber loop
 ├── requirements.txt              # Python runtime dependencies
 ├── Dockerfile                    # Container image (python:3.11-slim)
-├── .env                          # Environment variables (MQTT, DB, API)
-│
+├── README.md                     # README file
 ├── routes/                       # FastAPI route modules (absolute imports)
 │   ├── __init__.py
 │   ├── devices.py                # GET/POST/PUT/DELETE /devices
@@ -484,41 +358,18 @@ raspberry_pi/backend/
 │   ├── alerts.py                 # GET/POST /alerts, PATCH /alerts/{id}/ack
 │   └── users.py                  # User management endpoints
 │
+├── auth/                         # Authentication routes
+│   └── README.md                 # README file
+│
 └── services/                     # Business logic services
     ├── __init__.py
     ├── mqtt_subscriber.py        # Paho-MQTT client; subscribes, validates, persists
     ├── database_writer.py        # TimescaleDB/PostgreSQL writer (psycopg2)
+    ├── lora_receiver.py          # LoraWAN receiver (sx1278 driver)
     └── telemetry_validator.py    # Validates telemetry metrics & ranges
 ```
 
-#### 5.11.2. Python Import Chain
-
-The backend uses **absolute imports** (not relative). The import chain is:
-
-1. **`main.py` → `main.py` entry point**
-   ```python
-   from services.mqtt_subscriber import MqttSubscriber
-   from routes import devices, telemetry, alerts, users
-   ```
-
-2. **`services/mqtt_subscriber.py`**
-   - Inserts its parent directory (`backend/`) into `sys.path` so the `services` package is importable
-   - Uses **relative imports** to access sibling modules
-   - `from .telemetry_validator import validate`
-   - `from .database_writer import write_telemetry`
-
-3. **`services/telemetry_validator.py`**
-   - Standalone; only Python standard library (`logging`)
-
-4. **`services/database_writer.py`**
-   - Imports third-party packages: `psycopg2`, `python-dotenv`
-   - Pure absolute imports
-
-5. **`routes/devices.py`, `routes/telemetry.py`, `routes/alerts.py`, `routes/users.py`**
-   - Import FastAPI only from the standard library
-   - All use absolute imports
-
-#### 5.11.3. Running the Backend
+#### 5.6.2. Running the Backend
 
 From the `backend/` directory:
 ```bash
@@ -526,21 +377,6 @@ cd raspberry_pi/backend
 python main.py
 ```
 
-The `sys.path` fix in `main.py` ensures the import chain works regardless of
-the current working directory.
-
-#### 5.11.4. Key Changes from Previous Structure
-
-| Old Path | New Path |
-|---|---|
-| `server/api/main.py` | `raspberry_pi/backend/main.py` |
-| `server/requirements.txt` | `raspberry_pi/backend/requirements.txt` |
-| `server/api/routes/` | `raspberry_pi/backend/routes/` |
-| `server/api/services/` | `raspberry_pi/backend/services/` |
-| `server/api/schemas/` | `raspberry_pi/backend/routes/__init__.py` (placeholder) |
-| `server/api/auth/` | `raspberry_pi/backend/auth/README.md` (documentation only) |
-
-No longer used: `server/api/main.py`, `server/api/schemas/`, `server/requirements.txt`.
 ## 6. Security Architecture & Access Control (NEXT PHASE, not including in this phase of Deployment DB and installation devices)
 
 ### A. Authentication & RBAC
@@ -608,15 +444,15 @@ To validate system robustness, your team should execute these simulated security
 
 To streamline testing, deployment, and validation without needing manual complex commands, the project includes an automated toolchain in [`scripts/`](scripts/):
 
-| Script | Purpose | Example Usage |
-|---|---|---|
-| [`setup_env.sh`](scripts/setup_env.sh) | Sets up `.env`, directory structure, permissions, and Python virtual environment | `./scripts/setup_env.sh` |
-| [`docker_control.sh`](scripts/docker_control.sh) | Controls the entire container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) | `./scripts/docker_control.sh start` |
-| [`db_manage.sh`](scripts/db_manage.sh) | Manages PostgreSQL & TimescaleDB migrations, seeds, verification, and `psql` shell | `./scripts/db_manage.sh init` |
-| [`simulate_telemetry.py`](scripts/simulate_telemetry.py) | Generates and publishes synthetic sensor readings over MQTT with anomaly injection | `./scripts/simulate_telemetry.py --device G11 --interval 2.0` |
-| [`mqtt_monitor.py`](scripts/mqtt_monitor.py) | Real-time terminal telemetry monitor subscribing to `enviromesh/#` | `./scripts/mqtt_monitor.py` |
-| [`check_health.py`](scripts/check_health.py) | Diagnostic tool testing Nginx, FastAPI backend, EMQX broker, and TimescaleDB | `./scripts/check_health.py` |
-| [`lora_packet_inject.py`](scripts/lora_packet_inject.py) | Tests the LoRa packet processing pipeline without physical SX1278 hardware | `./scripts/lora_packet_inject.py --device G11` |
+| Script                                                   | Purpose                                                                                      | Example Usage                                                 |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [`setup_env.sh`](scripts/setup_env.sh)                   | Sets up `.env`, directory structure, permissions, and Python virtual environment             | `./scripts/setup_env.sh`                                      |
+| [`docker_control.sh`](scripts/docker_control.sh)         | Controls the entire container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) | `./scripts/docker_control.sh start`                           |
+| [`db_manage.sh`](scripts/db_manage.sh)                   | Manages PostgreSQL & TimescaleDB migrations, seeds, verification, and `psql` shell           | `./scripts/db_manage.sh init`                                 |
+| [`simulate_telemetry.py`](scripts/simulate_telemetry.py) | Generates and publishes synthetic sensor readings over MQTT with anomaly injection           | `./scripts/simulate_telemetry.py --device G11 --interval 2.0` |
+| [`mqtt_monitor.py`](scripts/mqtt_monitor.py)             | Real-time terminal telemetry monitor subscribing to `enviromesh/#`                           | `./scripts/mqtt_monitor.py`                                   |
+| [`check_health.py`](scripts/check_health.py)             | Diagnostic tool testing Nginx, FastAPI backend, EMQX broker, and TimescaleDB                 | `./scripts/check_health.py`                                   |
+| [`lora_packet_inject.py`](scripts/lora_packet_inject.py) | Tests the LoRa packet processing pipeline without physical SX1278 hardware                   | `./scripts/lora_packet_inject.py --device G11`                |
 
 Full documentation for each script is available in [`scripts/README.md`](scripts/README.md).
 

@@ -6,6 +6,24 @@
 
 ---
 
+## Table of Contents
+
+- [1. System Overview & Architecture](#1-system-overview--architecture)
+- [2. Directory Layout](#2-directory-layout)
+- [3. Hardware Wiring: SX1278 LoRa Receiver (RPi 40-Pin Header)](#3-hardware-wiring-sx1278-lora-receiver-rpi-40-pin-header)
+- [4. Running the Platform](#4-running-the-platform)
+  - [Option A: Using Helper Scripts (Recommended)](#option-a-using-helper-scripts-recommended)
+  - [Option B: Native Docker Compose](#option-b-native-docker-compose)
+- [5. Host Ports & Service Endpoints](#5-host-ports--service-endpoints)
+- [6. Implementation Roadmap & Next Phases](#6-implementation-roadmap--next-phases)
+  - [Phase 1: Core Infrastructure & Persistence](#phase-1-core-infrastructure--persistence-complete)
+  - [Phase 2: Ingestion & Gateway Pipeline](#phase-2-ingestion--gateway-pipeline-complete)
+  - [Phase 4: Application Layer, Security & Dashboard](#phase-4-application-layer-security--dashboard-in-progress)
+  - [Phase 5: Hardware Field Testing & Video Subsystem](#phase-5-hardware-field-testing--video-subsystem)
+- [7. Related Documentation](#7-related-documentation)
+
+---
+
 ## 1. System Overview & Architecture
 
 The Raspberry Pi (RPi 3 / 4 / 5) serves as the central hub of the **EnviroMesh** ecosystem, acting in two concurrent roles:

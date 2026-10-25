@@ -11,6 +11,22 @@ The system implements a **polyglot persistence architecture** hosted on PostgreS
 
 ---
 
+## Table of Contents
+
+- [1. Directory Layout](#1-directory-layout)
+- [2. Managing the Database with Helper Scripts](#2-managing-the-database-with-helper-scripts)
+- [3. Schema Specifications](#3-schema-specifications)
+  - [3.1. Relational Registry](#31-relational-registry-migration001_create_registrysql)
+  - [3.2. Time-Series Telemetry](#32-time-series-telemetry-migration001_create_telemetrysql)
+- [4. Seed Data & Reference Accounts](#4-seed-data--reference-accounts-seed001_seed_registrysql)
+- [5. Implementation Roadmap (Future Database Phases)](#5-implementation-roadmap-future-database-phases)
+  - [Phase 4: Alerts Schema & Event Auditing](#phase-4-alerts-schema--event-auditing)
+  - [Phase 4: TimescaleDB Downsampling & Continuous Aggregates](#phase-4-timescaledb-downsampling--continuous-aggregates)
+  - [Phase 5: Retention Policies & Archiving](#phase-5-retention-policies--archiving)
+- [6. Related Documentation](#6-related-documentation)
+
+---
+
 ## 1. Directory Layout
 
 ```

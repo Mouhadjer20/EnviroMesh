@@ -4,6 +4,20 @@ This directory contains the operational and deployment configurations for the **
 
 ---
 
+## Table of Contents
+
+- [Directory Structure](#directory-structure)
+- [1. Nginx Reverse Proxy (`nginx/default.conf`)](#1-nginx-reverse-proxy-nginxdefaultconf)
+  - [Key Responsibilities](#key-responsibilities)
+- [2. EMQX MQTT Authorization (`emqx/acl.conf`)](#2-emqx-mqtt-authorization-emqxaclconf)
+  - [Access Control Rules](#access-control-rules)
+- [3. Host Systemd Services (`systemd/`)](#3-host-systemd-services-systemd)
+  - [3.1. Docker Compose Service](#31-docker-compose-service-systemdenviromeshservice)
+  - [3.2. Native LoRa Receiver Service](#32-native-lora-receiver-service-systemdenviromesh-loraservice)
+- [4. Related Documentation](#4-related-documentation)
+
+---
+
 ## Directory Structure
 
 ```

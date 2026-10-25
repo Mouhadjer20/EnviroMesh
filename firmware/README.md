@@ -4,6 +4,27 @@ This directory contains the embedded firmware for the ESP32 field sensor nodes, 
 
 ---
 
+## Table of Contents
+
+- [1. Node Directory Layout & Implementation Status](#1-node-directory-layout--implementation-status)
+- [2. Hardware Topology & Node Specifications](#2-hardware-topology--node-specifications)
+- [3. Node Details & Pin Configurations](#3-node-details--pin-configurations)
+  - [3.1. Node G11](#31-node-g11-node_g11srcmainino)
+  - [3.2. Node G41](#32-node-g41-firmwarenodesnode_g41srcmainmainino)
+  - [3.3. Test Nodes G42 & G43](#33-test-nodes-g42--g43-node_g42-node_g43)
+- [4. Software Dependencies & Compilation](#4-software-dependencies--compilation)
+  - [Required Arduino Libraries](#required-arduino-libraries)
+  - [Compilation Settings (Arduino IDE / PlatformIO)](#compilation-settings-arduino-ide--platformio)
+- [5. Calibration Procedure (MQ-2 Gas Sensor)](#5-calibration-procedure-mq-2-gas-sensor)
+- [6. Future Implementation Roadmap (Firmware Phases)](#6-future-implementation-roadmap-firmware-phases)
+  - [Phase 3.1: Finalize Node G31](#phase-31-finalize-node-g31-group-3--wi-fi-bmp280-node)
+  - [Phase 3.2: Finalize Node G61](#phase-32-finalize-node-g61-group-6--wi-fi-servo--motion-node)
+  - [Phase 3.3: Communications Security](#phase-33-communications-security-phase-4-integration)
+  - [Phase 3.4: Low-Power Optimization](#phase-34-low-power-optimization)
+- [7. Related Documentation](#7-related-documentation)
+
+---
+
 ## 1. Node Directory Layout & Implementation Status
 
 ```
@@ -29,26 +50,18 @@ firmware/
             └── main.ini               # Specification stub: MQ-2, DHT11, Water, PIR, 9g Micro Servo, BLE
 ```
 
-### Advanced Dual-Radio Prototypes (`my_files/`)
-In addition to the standard node firmware, the repository includes working multi-hop communication prototypes:
-- [`my_files/sensor_esp_now/sensor_esp_now.ino`](../my_files/sensor_esp_now/sensor_esp_now.ino): Battery-optimized sensor node transmitting 32-byte binary `SensorPacket` frames via **ESP-NOW**.
-- [`my_files/esp_now_LoRa/esp_now_LoRa.ino`](../my_files/esp_now_LoRa/esp_now_LoRa.ino): **ESP-NOW to LoRa Bridge Gateway**; receives binary packets from field sensors, deserializes them, queues transmissions, and forwards structured JSON over LoRa 433 MHz to the Raspberry Pi concentrator.
-- [`my_files/esp_sensors_code/esp_sensors_code.ino`](../my_files/esp_sensors_code/esp_sensors_code.ino): Standalone multi-sensor validation sketch for testing DHT11, MQ-2 analog/digital, and water sensors on the serial console.
-
 ---
 
 ## 2. Hardware Topology & Node Specifications
 
-| Node | Device ID | Group | Sensors / Actuators | Primary Transport | Destination | Status |
-|---|---|---|---|---|---|---|
-| `node_g11` | `G11` | G1 | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz | RPi (LoRa Gateway) | **Production-Ready** |
-| `node_g41` | `G41` | G4 | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz | RPi (LoRa Gateway) | **Production-Ready** |
-| `node_g42` | `G42` | G4 | Wi-Fi Station | Wi-Fi / MQTT | EMQX Broker (`:1883`) | **Test Harness** |
-| `node_g43` | `G43` | G4 | Synthetic Metrics | Wi-Fi / MQTT | EMQX Broker (`:1883`) | **Test Harness** |
-| `node_g31` | `G31` | G3 | BMP280 (Pressure/Temp), MQ-2 (Gas), Water Leak | Wi-Fi / MQTT | EMQX Broker (`:1883`) | **Phase 3.1** |
-| `node_g61_servo`| `G61` | G6 | MQ-2, DHT11, Water, PIR Motion, Micro Servo 9g | Wi-Fi MQTT + BLE | EMQX + Local Operator | **Phase 3.2** |
-| `sensor_esp_now`| `ESP #1` | — | DHT11, MQ-2, Water Leak | ESP-NOW (Ch 1) | ESP-NOW Gateway | **Prototype** |
-| `esp_now_LoRa` | `ESP #2` | — | Dual-Radio Concentrator | ESP-NOW ➔ LoRa | RPi (LoRa Gateway) | **Prototype** |
+| Node             | Device ID | Group | Sensors / Actuators                            | Primary Transport | Destination           | Status               |
+| ---------------- | --------- | ----- | ---------------------------------------------- | ----------------- | --------------------- | -------------------- |
+| `node_g11`       | `G11`     | G1    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | RPi (LoRa Gateway)    | **Production-Ready** |
+| `node_g41`       | `G41`     | G4    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | RPi (LoRa Gateway)    | **Production-Ready** |
+| `node_g42`       | `G42`     | G4    | Wi-Fi Station                                  | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Test Harness**     |
+| `node_g43`       | `G43`     | G4    | Synthetic Metrics                              | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Test Harness**     |
+| `node_g31`       | `G31`     | G3    | BMP280 (Pressure/Temp), MQ-2 (Gas), Water Leak | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Phase 3.1**        |
+| `node_g61_servo` | `G61`     | G6    | MQ-2, DHT11, Water, PIR Motion, Micro Servo 9g | Wi-Fi MQTT + BLE  | EMQX + Local Operator | **Phase 3.2**        |
 
 ---
 

@@ -4,6 +4,20 @@ This directory contains command-line utilities and test harnesses designed to st
 
 ---
 
+## Table of Contents
+
+- [Script Overview](#script-overview)
+- [1. Environment & Setup](#1-environment--setup)
+- [2. Managing Docker Services](#2-managing-docker-services)
+- [3. Database Management (PostgreSQL & TimescaleDB)](#3-database-management-postgresql--timescaledb)
+- [4. Simulating Sensor Telemetry (Hardware-Free Testing)](#4-simulating-sensor-telemetry-hardware-free-testing)
+- [5. Live MQTT Telemetry Monitor](#5-live-mqtt-telemetry-monitor)
+- [6. System Health Diagnostic](#6-system-health-diagnostic)
+- [7. LoRa Ingestion Pipeline Testing](#7-lora-ingestion-pipeline-testing)
+- [Requirements](#requirements)
+
+---
+
 ## Script Overview
 
 | Script | Type | Description |

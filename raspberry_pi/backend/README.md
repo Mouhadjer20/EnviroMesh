@@ -4,6 +4,27 @@ The EnviroMesh backend is a **FastAPI** application and concurrent ingestion dae
 
 ---
 
+## Table of Contents
+
+- [1. Architecture & Telemetry Pipeline](#1-architecture--telemetry-pipeline)
+- [2. Directory Layout & Source Code Map](#2-directory-layout--source-code-map)
+- [3. Services Deep Dive](#3-services-deep-dive)
+  - [3.1. MQTT Subscriber](#31-mqtt-subscriber-servicesmqtt_subscriberpy)
+  - [3.2. LoRa Receiver](#32-lora-receiver-serviceslora_receiverpy)
+  - [3.3. Telemetry Validator](#33-telemetry-validator-servicestelemetry_validatorpy)
+  - [3.4. Database Writer](#34-database-writer-servicesdatabase_writerpy)
+- [4. API Routes Overview](#4-api-routes-overview)
+- [5. Running the Backend](#5-running-the-backend)
+  - [Method 1: Via Docker Compose (Recommended)](#method-1-via-docker-compose-recommended)
+  - [Method 2: Native Local Development](#method-2-native-local-development)
+- [6. Implementation Roadmap (Phase 4 Tasks)](#6-implementation-roadmap-phase-4-tasks)
+  - [1. Database Query Implementation in Routes](#1-database-query-implementation-in-routes)
+  - [2. Authentication & Authorization](#2-authentication--authorization-backendauth)
+  - [3. Real-Time WebSocket Streaming](#3-real-time-websocket-streaming)
+- [7. Related Documentation](#7-related-documentation)
+
+---
+
 ## 1. Architecture & Telemetry Pipeline
 
 ```
