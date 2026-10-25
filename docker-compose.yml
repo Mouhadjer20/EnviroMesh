@@ -13,10 +13,11 @@ services:
       EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME}
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
     ports:
-      # MQTT listener; restrict access with the host firewall
+      # MQTT listener — accessible from any network the RPi is connected to
       - "${MQTT_BIND_IP:-0.0.0.0}:${MQTT_PORT:-1883}:1883"
-      # Keep the EMQX administration dashboard local
-      - "127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083"
+      # EMQX dashboard — accessible from the same LAN subnet as the RPi
+      # Set EMQX_DASHBOARD_BIND_IP=127.0.0.1 in .env to restrict to localhost only
+      - "${EMQX_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_DASHBOARD_PORT:-18083}:18083"
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log

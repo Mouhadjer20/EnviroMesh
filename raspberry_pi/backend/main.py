@@ -54,8 +54,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("backend")
 
 
+import uvicorn
+
 def main():
     logger.info("Starting EnviroMesh backend on RPi (Core Server)")
+
+    api_host = os.getenv("API_HOST", "0.0.0.0")
+    api_port = int(os.getenv("API_PORT", 8000))
 
     mqtt_host = os.getenv("MQTT_HOST", os.getenv("EMQX_URL", "localhost"))
     mqtt_port = int(os.getenv("MQTT_PORT", 1883))
@@ -67,22 +72,34 @@ def main():
 
     # Run the LoRa receiver in a background thread so it does not block the
     # MQTT subscriber or the FastAPI event loop.
-    lora_thread = threading.Thread(target=lora_run, name="lora-receiver", daemon=True)
-    lora_thread.start()
-    logger.info("LoRa receiver thread started")
+    try:
+        lora_thread = threading.Thread(target=lora_run, name="lora-receiver", daemon=True)
+        lora_thread.start()
+        logger.info("LoRa receiver thread started")
+    except Exception as exc:
+        logger.warning("Could not start LoRa receiver thread: %s", exc)
 
     def shutdown(signum, frame):
         logger.info("Shutdown signal received")
         subscriber.stop()
-        # The LoRa receiver thread is a daemon, so it will be reaped on exit.
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    # Start MQTT subscriber network loop in background thread
     try:
-        subscriber.run()
-    except KeyboardInterrupt:
+        subscriber.connect()
+        subscriber.client.loop_start()
+        logger.info("MQTT subscriber network loop running in background")
+    except Exception as exc:
+        logger.warning("Could not connect MQTT subscriber at startup: %s", exc)
+
+    # Start FastAPI / Uvicorn server in main thread
+    logger.info("Starting FastAPI server on %s:%d", api_host, api_port)
+    try:
+        uvicorn.run(app, host=api_host, port=api_port, log_level="info")
+    finally:
         subscriber.stop()
 
 
