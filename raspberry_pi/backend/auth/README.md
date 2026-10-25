@@ -3,6 +3,17 @@
 This folder contains the authentication and authorization logic for the
 EnviroMesh platform API.
 
+---
+
+## Table of Contents
+
+- [Responsibilities](#responsibilities)
+- [Suggested Contents](#suggested-contents)
+- [Security Notes](#security-notes)
+- [Related Documentation](#related-documentation)
+
+---
+
 ## Responsibilities
 
 - **User registration & login** with email/password credentials.
