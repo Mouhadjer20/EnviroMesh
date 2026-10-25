@@ -12,9 +12,6 @@ import os
 import sys
 import time
 
-import spidev
-import RPi.GPIO as GPIO
-
 # Make the raspberry_pi package importable when this script is run directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -59,10 +56,27 @@ IRQ_PAYLOAD_CRC_ERROR = 0x20
 # SPI
 # ==================================================
 
-spi = spidev.SpiDev()
-spi.open(0, 0)
-spi.max_speed_hz = 100000
-spi.mode = 0
+# Hardware SPI + GPIO — only available on real Raspberry Pi hardware.
+# These are imported lazily inside the functions that need them so the
+# module can be safely imported on any platform (e.g. x86 Docker on dev Mac).
+_spidev_available = False
+try:
+    import spidev as _spidev_mod
+    import RPi.GPIO as GPIO  # noqa: F401
+    _spidev_available = True
+except ModuleNotFoundError:
+    logger = logging.getLogger("lora_receiver")  # ensure logger exists early
+    logger.warning(
+        "spidev / RPi.GPIO not available — LoRa hardware receiver disabled. "
+        "Running in software-only mode."
+    )
+
+spi = None
+if _spidev_available:
+    spi = _spidev_mod.SpiDev()
+    spi.open(0, 0)
+    spi.max_speed_hz = 100_000
+    spi.mode = 0
 
 
 def read_register(reg):
@@ -78,7 +92,7 @@ def write_register(reg, value):
 # ==================================================
 
 def reset_module():
-    GPIO.setmode(GPIO.BCM)
+    import RPi.GPIO as GPIO
     GPIO.setwarnings(False)
     GPIO.setup(RESET_PIN, GPIO.OUT)
 
@@ -203,7 +217,17 @@ def run():
     ``REG_IRQ_FLAGS`` continuously, processing every received packet through
     :func:`process_packet`. Designed to be run in a background thread while
     other services (e.g. the MQTT subscriber) run in the main thread.
+
+    On non-RPi platforms where spidev / RPi.GPIO are unavailable, this
+    function logs a warning and returns immediately so the rest of the
+    backend (FastAPI + MQTT) continues to work.
     """
+    if not _spidev_available:
+        logging.getLogger("lora_receiver").warning(
+            "LoRa hardware not available on this platform — receiver thread exiting."
+        )
+        return
+
     logging.basicConfig(level=logging.INFO)
     logger.info("Initialisation du récepteur LoRa...")
     init_lora()
@@ -253,6 +277,9 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error("ERREUR: %s", e)
     finally:
-        spi.close()
-        GPIO.cleanup()
+        if spi is not None:
+            spi.close()
+        if _spidev_available:
+            import RPi.GPIO as _GPIO
+            _GPIO.cleanup()
         logger.info("Ressources libérées.")

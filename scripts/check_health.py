@@ -3,18 +3,21 @@
 
 Performs automated connectivity and health checks across all architectural layers:
 1. Reverse Proxy (Nginx on port 8080)
-2. Web Dashboard (HTTP on port 8080 /)
-3. Backend REST API (HTTP on port 8080 /api/health or 8000 /health)
-4. MQTT Broker (EMQX TCP on port 1883)
-5. TimescaleDB (PostgreSQL TCP / authentication on port 5432)
+2. Backend REST API (HTTP on port 8080 /api/health)
+3. MQTT Broker (EMQX TCP on port 1883)
+4. EMQX Web Console (HTTP on port 18083)
+5. TimescaleDB (via docker exec pg_isready)
+
+All services are bound to 0.0.0.0 — any device on the same subnet as the RPi
+can reach them using the LAN IP printed in the output below.
 """
 
 import os
-from pathlib import Path
 import socket
-import sys
+import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT_DIR / ".env"
@@ -27,15 +30,36 @@ if ENV_FILE.exists():
         pass
 
 # Terminal colors
-GREEN = "\033[92m"
-RED = "\033[91m"
+GREEN  = "\033[92m"
+RED    = "\033[91m"
 YELLOW = "\033[93m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
+CYAN   = "\033[96m"
+BOLD   = "\033[1m"
+RESET  = "\033[0m"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def get_lan_ip() -> str:
+    """Return the primary LAN IP of this machine (not 127.0.0.1).
+
+    Connects a UDP socket to an external address; no data is sent, but the OS
+    selects the correct outbound interface so we can read its IP.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 
 def check_tcp_port(host: str, port: int, timeout: float = 2.0) -> bool:
-    """Test if a TCP port is open and listening."""
+    """Return True if a TCP port is open and accepting connections."""
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -43,122 +67,141 @@ def check_tcp_port(host: str, port: int, timeout: float = 2.0) -> bool:
         return False
 
 
-def check_http_endpoint(url: str, timeout: float = 3.0) -> tuple[bool, str]:
-    """Test HTTP GET endpoint and return (success, status_msg)."""
+def check_http(url: str, timeout: float = 4.0) -> tuple[bool, str]:
+    """HTTP GET a URL and return (success, human-readable status)."""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "EnviroMesh-HealthCheck/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            status = response.getcode()
-            if 200 <= status < 400:
-                return True, f"HTTP {status}"
-            return False, f"HTTP {status}"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "EnviroMesh-HealthCheck/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            code = resp.getcode()
+            return (200 <= code < 400), f"HTTP {code}"
     except urllib.error.HTTPError as exc:
+        # 4xx/5xx — port is reachable but app returned an error
         return False, f"HTTP {exc.code}"
     except Exception as exc:
         return False, f"Failed: {exc}"
 
 
-def check_timescaledb(host: str, port: int, dbname: str, user: str, password: str) -> tuple[bool, str]:
-    """Check TimescaleDB connectivity via psycopg2 if available, else TCP socket."""
+def check_timescaledb_docker(dbname: str, user: str) -> tuple[bool, str]:
+    """Run pg_isready inside the TimescaleDB container via docker exec.
+
+    This avoids any host-port conflicts with a locally installed PostgreSQL.
+    """
     try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=host,
-            port=port,
-            dbname=dbname,
-            user=user,
-            password=password,
-            connect_timeout=3,
+        result = subprocess.run(
+            [
+                "docker", "exec", "enviromesh-timescaledb",
+                "pg_isready", "-U", user, "-d", dbname,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=6,
         )
-        with conn.cursor() as cur:
-            cur.execute("SELECT version(), extversion FROM pg_extension WHERE extname = 'timescaledb';")
-            row = cur.fetchone()
-            tsdb_ver = row[1] if row else "not active"
-        conn.close()
-        return True, f"OK (TimescaleDB {tsdb_ver})"
-    except ImportError:
-        # Fallback to TCP socket check
-        if check_tcp_port(host, port):
-            return True, "TCP Port Open (psycopg2 not installed for deep check)"
-        return False, "TCP Connection Refused"
+        if result.returncode == 0:
+            return True, "pg_isready OK (docker exec)"
+        output = (result.stdout + result.stderr).strip()
+        return False, output or "Not ready"
+    except FileNotFoundError:
+        return False, "docker not found in PATH"
+    except subprocess.TimeoutExpired:
+        return False, "Timeout waiting for pg_isready"
     except Exception as exc:
-        return False, f"Auth/Query Error: {exc}"
+        return False, f"Error: {exc}"
 
 
-def main():
-    print(f"\n{BOLD}======================================================{RESET}")
-    print(f"{BOLD}   EnviroMesh — Stack Health Diagnostics              {RESET}")
-    print(f"{BOLD}======================================================{RESET}\n")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-    web_host = "localhost"
-    web_port = int(os.getenv("WEB_PORT", 8080))
-    api_port = int(os.getenv("API_PORT", 8000))
-    mqtt_host = os.getenv("MQTT_HOST", "localhost")
-    if mqtt_host == "emqx":
-        mqtt_host = "localhost"
-    mqtt_port = int(os.getenv("MQTT_PORT", 1883))
+def main() -> None:
+    print(f"\n{BOLD}{'=' * 58}{RESET}")
+    print(f"{BOLD}   EnviroMesh — Stack Health Diagnostics{RESET}")
+    print(f"{BOLD}{'=' * 58}{RESET}\n")
+
+    lan_ip         = get_lan_ip()
+    web_port       = int(os.getenv("WEB_PORT",              8080))
+    mqtt_port      = int(os.getenv("MQTT_PORT",             1883))
     emqx_dash_port = int(os.getenv("EMQX_DASHBOARD_PORT", 18083))
+    db_name        = os.getenv("POSTGRES_DB",   "enviromesh")
+    db_user        = os.getenv("POSTGRES_USER", "enviromesh_app")
 
-    db_host = os.getenv("DB_HOST", "localhost")
-    if db_host == "timescaledb":
-        db_host = "localhost"
-    db_port = int(os.getenv("DB_PORT", 5432))
-    db_name = os.getenv("POSTGRES_DB", "enviromesh")
-    db_user = os.getenv("POSTGRES_USER", "enviromesh_app")
-    db_password = os.getenv("POSTGRES_PASSWORD", "")
+    # All port bindings are 0.0.0.0, so localhost always works for local checks.
+    local = "localhost"
 
-    checks = []
+    print(f"{CYAN}{BOLD}This machine's LAN IP: {lan_ip}{RESET}")
+    print(f"Other devices on the same network can use:\n")
+    print(f"  🌐  Dashboard + API : {BOLD}http://{lan_ip}:{web_port}{RESET}")
+    print(f"  📡  MQTT Broker     : {BOLD}{lan_ip}:{mqtt_port}{RESET}")
+    print(f"  🛠   EMQX Console    : {BOLD}http://{lan_ip}:{emqx_dash_port}{RESET}\n")
 
-    # 1. Nginx Reverse Proxy
-    url_proxy = f"http://{web_host}:{web_port}"
-    ok, msg = check_http_endpoint(url_proxy)
-    checks.append(("Nginx Gateway (Proxy)", f"{web_host}:{web_port}", ok, msg))
+    checks: list[tuple[str, str, bool, str]] = []
 
-    # 2. Backend Health (Direct or via Proxy)
-    url_api = f"http://{web_host}:{web_port}/api/health"
-    ok, msg = check_http_endpoint(url_api)
-    if not ok:
-        # Try direct
-        url_api_direct = f"http://localhost:{api_port}/health"
-        ok, msg = check_http_endpoint(url_api_direct)
-        checks.append(("FastAPI Backend (/health)", f"localhost:{api_port}", ok, msg))
-    else:
-        checks.append(("FastAPI Backend (/api/health)", f"{web_host}:{web_port}/api", ok, msg))
+    # 1. Nginx reverse proxy (serves dashboard + /api/*)
+    ok, msg = check_http(f"http://{local}:{web_port}")
+    checks.append(("Nginx Gateway (Proxy)", f"{local}:{web_port}", ok, msg))
 
-    # 3. MQTT Broker (EMQX)
-    ok_mqtt = check_tcp_port(mqtt_host, mqtt_port)
-    msg_mqtt = "Port 1883 Open" if ok_mqtt else "Connection Refused"
-    checks.append(("EMQX MQTT Broker", f"{mqtt_host}:{mqtt_port}", ok_mqtt, msg_mqtt))
+    # 2. Backend via Nginx proxy (/api/health)
+    ok, msg = check_http(f"http://{local}:{web_port}/api/health")
+    checks.append(("FastAPI Backend (/api/health)", f"{local}:{web_port}/api", ok, msg))
 
-    # 4. EMQX Dashboard
-    ok_emqx_dash = check_tcp_port(mqtt_host, emqx_dash_port)
-    msg_emqx_dash = "Port 18083 Open" if ok_emqx_dash else "Connection Refused"
-    checks.append(("EMQX Web Console", f"{mqtt_host}:{emqx_dash_port}", ok_emqx_dash, msg_emqx_dash))
+    # 3. EMQX MQTT broker — bound to 0.0.0.0, reachable from LAN
+    ok_mqtt = check_tcp_port(local, mqtt_port)
+    checks.append((
+        "EMQX MQTT Broker",
+        f"{local}:{mqtt_port}",
+        ok_mqtt,
+        f"Port open — LAN clients: {lan_ip}:{mqtt_port}" if ok_mqtt else "Connection Refused",
+    ))
 
-    # 5. TimescaleDB
-    ok_db, msg_db = check_timescaledb(db_host, db_port, db_name, db_user, db_password)
-    checks.append(("TimescaleDB Database", f"{db_host}:{db_port}/{db_name}", ok_db, msg_db))
+    # 4. EMQX web console — bound to 0.0.0.0, reachable from LAN
+    ok_dash = check_tcp_port(local, emqx_dash_port)
+    checks.append((
+        "EMQX Web Console",
+        f"{local}:{emqx_dash_port}",
+        ok_dash,
+        f"Open — http://{lan_ip}:{emqx_dash_port}" if ok_dash else "Connection Refused",
+    ))
 
+    # 5. TimescaleDB — internal to Docker; check via docker exec
+    ok_db, msg_db = check_timescaledb_docker(db_name, db_user)
+    checks.append(("TimescaleDB Database", f"docker:5432/{db_name}", ok_db, msg_db))
+
+    # -----------------------------------------------------------------------
     # Print results table
-    print(f"{'SERVICE':<28} | {'TARGET':<22} | {'STATUS':<8} | {'DETAILS'}")
-    print("-" * 80)
+    # -----------------------------------------------------------------------
+    col_svc    = 30
+    col_target = 26
+    col_status = 8
+    total_width = col_svc + col_target + col_status + 40
+
+    print(f"{'SERVICE':<{col_svc}} | {'TARGET':<{col_target}} | {'STATUS':<{col_status}} | DETAILS")
+    print("-" * total_width)
 
     all_passed = True
     for service, target, ok, details in checks:
-        if ok:
-            status = f"{GREEN}ONLINE{RESET}"
-        else:
-            status = f"{RED}OFFLINE{RESET}"
+        colour = GREEN if ok else RED
+        status_word = "ONLINE" if ok else "OFFLINE"
+        # ANSI codes are invisible characters — pad before adding colour
+        status_str = f"{colour}{status_word}{RESET}"
+        # Compensate for invisible ANSI bytes so columns line up
+        ansi_pad = len(colour) + len(RESET)
+        print(
+            f"{service:<{col_svc}} | {target:<{col_target}} | "
+            f"{status_str:<{col_status + ansi_pad}} | {details}"
+        )
+        if not ok:
             all_passed = False
-        print(f"{service:<28} | {target:<22} | {status:<17} | {details}")
 
-    print("\n" + "-" * 80)
+    print("-" * total_width)
     if all_passed:
-        print(f"{GREEN}{BOLD}✔ All EnviroMesh core services are running normally!{RESET}\n")
+        print(f"\n{GREEN}{BOLD}✔ All EnviroMesh core services are running normally!{RESET}\n")
     else:
-        print(f"{YELLOW}{BOLD}⚠ Some services are currently unreachable.{RESET}")
-        print("  • If using Docker: run './scripts/docker_control.sh start'")
-        print("  • If using local services: verify EMQX and PostgreSQL are running.\n")
+        print(f"\n{YELLOW}{BOLD}⚠  Some services are currently unreachable.{RESET}")
+        print("  • Docker stack not running?  →  ./scripts/docker_control.sh start")
+        print("  • Backend 502 Bad Gateway?   →  ./scripts/docker_control.sh build")
+        print("  •                                ./scripts/docker_control.sh restart")
+        print("  • TimescaleDB not ready?     →  Container may still be initializing.\n")
 
 
 if __name__ == "__main__":
