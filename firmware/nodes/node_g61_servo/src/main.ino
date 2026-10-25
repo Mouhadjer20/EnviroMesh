@@ -1,13 +1,25 @@
-// EnviroMesh - Wi-Fi step: sensors + JSON (phase 2) + Wi-Fi connection + NTP (UTC) time.
-// Copy secrets.h.example to secrets.h and fill it in before compiling.
+/**
+ * @file main.ino
+ * @brief EnviroMesh G61 environmental and servo node.
+ *
+ * Reads MQ-2, DHT11, water and PIR sensors and drives an SG90 servo on an
+ * ESP32. Telemetry is built as JSON, timestamped in UTC via NTP, and published
+ * over Wi-Fi to an MQTT broker on enviromesh/devices/G61/telemetry..
+ * Copy secrets.h.example to secrets.h and fill it in before compiling.
+ */
 
 #include <WiFi.h>
 #include <time.h>
 #include <DHT.h>
 #include <ESP32Servo.h>
-#include <ArduinoJson.h>    // ArduinoJson v7
+#include <ArduinoJson.h>
+#include <PubSubClient.h>   // PubSubClient (Nick O'Leary)    
 
-#include "secrets.h"        // WIFI_SSID, WIFI_PASSWORD 
+#include "secrets.h"        // WIFI_SSID, WIFI_PASSWORD + MQTT
+
+#if MQTT_USE_TLS
+  #include <WiFiClientSecure.h>
+#endif
 
 // --- Pin Definitions ---
 const int PIN_MQ2 = 34;          // Analog input for MQ-2 (AO)
@@ -34,9 +46,11 @@ const char* PROTOCOL   = "wifi_mqtt";
 
 // --- Timing configuration (milliseconds) ---
 const unsigned long SENSOR_INTERVAL_MS   = 2000;    // sensor read + serial report
-const unsigned long JSON_INTERVAL_MS     = 10000;   // JSON build + status report
+const unsigned long JSON_INTERVAL_MS     = 10000;   // JSON build + MQTT publish + status report
 const unsigned long WIFI_RETRY_MS        = 10000;   // delay between Wi-Fi reconnection attempts
 const unsigned long STARTUP_NET_WAIT_MS  = 15000;   // max wait for Wi-Fi (+ NTP) at boot
+const unsigned long MQTT_RETRY_MIN_MS    = 5000;    // first MQTT retry delay
+const unsigned long MQTT_RETRY_MAX_MS    = 60000;   // retry delay cap (exponential backoff)
 
 // --- NTP configuration (UTC, no offset, no daylight saving) ---
 const char* NTP_SERVER_1 = "pool.ntp.org";
@@ -47,12 +61,30 @@ const time_t MIN_VALID_EPOCH = 1767225600;
 
 const size_t JSON_BUF_SIZE = 512;   // serialized telemetry (about 330 bytes in practice)
 
+const uint16_t MQTT_BUF_SIZE = 640; // PubSubClient packet buffer (topic + header + payload)
+
+// Optional secrets.h settings with safe defaults
+#ifndef MQTT_USER
+  #define MQTT_USER ""
+#endif
+#ifndef MQTT_PASSWORD
+  #define MQTT_PASSWORD ""
+#endif
+
 // --- DHT11 Configuration ---
 #define DHTTYPE DHT11
 DHT dht(PIN_DHT, DHTTYPE);
 
 // --- Servo Instance ---
 Servo myservo;
+
+// --- Network objects ---
+#if MQTT_USE_TLS
+  WiFiClientSecure netClient;
+#else
+  WiFiClient netClient;
+#endif
+PubSubClient mqtt(netClient);
 
 // --- Data Structure for Sensor Readings ---
 struct Measurements {
@@ -90,6 +122,11 @@ bool wifiWasConnected = false;
 unsigned long lastWifiAttemptMs = 0;
 unsigned long lastSensorMs = 0;
 unsigned long lastJsonMs = 0;
+unsigned long mqttRetryMs = MQTT_RETRY_MIN_MS;
+unsigned long lastMqttAttemptMs = 0;
+bool mqttAttempted = false;
+unsigned long publishCount = 0;
+unsigned long publishFailCount = 0;
 
 // Reused JSON document (avoids repeated allocation of the document object)
 JsonDocument telemetryDoc;
@@ -120,6 +157,12 @@ void initializeNTP();
 bool isClockSynced();
 void waitForNetworkAtStartup();
 void displayStatus();
+// --- Function Prototypes: MQTT ---
+bool mqttConfigValid();
+void initializeMQTT();
+bool connectMQTT();
+void reconnectMQTT();
+bool publishTelemetry(const char *json, size_t len);
 
 void setup() {
     Serial.begin(115200);
@@ -137,6 +180,7 @@ void setup() {
     currentMeasurements.waterCalibrationValid = calibrateWaterSensor();
 
     // Wi-Fi (bounded wait; the loop keeps retrying afterwards)
+    initializeMQTT();
     connectWiFi();
     waitForNetworkAtStartup();
 
@@ -151,6 +195,8 @@ void loop() {
 
     // Keep Wi-Fi alive without blocking
     maintainWiFi();
+    reconnectMQTT();
+    mqtt.loop();
 
     // Periodic sensor acquisition and serial report
     if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
@@ -448,6 +494,109 @@ void waitForNetworkAtStartup() {
 }
 
 // ==========================================
+// MQTT
+// ==========================================
+
+static bool isPlaceholder(const char *s) {
+    return s == nullptr || s[0] == '\0' || strstr(s, "REPLACE_ME") != nullptr;
+}
+
+// Broker and topic must have been set by the user in secrets.h.
+bool mqttConfigValid() {
+    return !isPlaceholder(MQTT_HOST) && !isPlaceholder(MQTT_TOPIC);
+}
+
+void initializeMQTT() {
+    if (!mqttConfigValid()) {
+        Serial.println("[MQTT] Broker/topic still set to placeholders in secrets.h. Publishing disabled.");
+        return;
+    }
+#if MQTT_USE_TLS
+    // Certificate verification stays ENABLED: the broker's CA certificate is required.
+    netClient.setCACert(MQTT_CA_CERT);
+#endif
+    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    mqtt.setBufferSize(MQTT_BUF_SIZE);
+    mqtt.setSocketTimeout(3);   // seconds; limits how long a dead connection can block the loop
+    mqtt.setKeepAlive(30);
+}
+
+// One connection attempt. The client ID is unique per board (device ID + MAC tail).
+bool connectMQTT() {
+    char clientId[48];
+    uint64_t mac = ESP.getEfuseMac();
+    snprintf(clientId, sizeof(clientId), "enviromesh-%s-%06X", DEVICE_ID, (uint32_t)(mac >> 24) & 0xFFFFFF);
+
+    Serial.printf("[MQTT] Connecting to %s:%d as %s...\n", MQTT_HOST, MQTT_PORT, clientId);
+
+    bool ok;
+    if (strlen(MQTT_USER) > 0) {
+        ok = mqtt.connect(clientId, MQTT_USER, MQTT_PASSWORD);
+    } else {
+        ok = mqtt.connect(clientId);
+    }
+
+    if (ok) {
+        Serial.println("[MQTT] Connected.");
+    } else {
+        Serial.printf("[MQTT] Connection failed, state=%d (see PubSubClient state codes)\n", mqtt.state());
+    }
+    return ok;
+}
+
+// Rate-limited reconnection with exponential backoff (5 s -> 60 s). Never loops.
+void reconnectMQTT() {
+    if (mqtt.connected()) {
+        mqttRetryMs = MQTT_RETRY_MIN_MS;
+        return;
+    }
+    if (!mqttConfigValid() || WiFi.status() != WL_CONNECTED) return;
+#if MQTT_USE_TLS
+    if (!isClockSynced()) return;   // certificate validation needs a correct date
+#endif
+    if (mqttAttempted && (millis() - lastMqttAttemptMs < mqttRetryMs)) return;
+
+    mqttAttempted = true;
+    lastMqttAttemptMs = millis();
+    if (!connectMQTT()) {
+        mqttRetryMs = min(mqttRetryMs * 2, MQTT_RETRY_MAX_MS);
+        Serial.printf("[MQTT] Next attempt in %lu s\n", mqttRetryMs / 1000);
+    }
+}
+
+// Publishes with QoS 0 (the only QoS PubSubClient supports for publishing).
+// A true return means "handed to the TCP socket", NOT "accepted/stored by the server".
+bool publishTelemetry(const char *json, size_t len) {
+    if (!mqttConfigValid()) {
+        Serial.println("[PUBLISH] Skipped: MQTT broker/topic not configured.");
+        return false;
+    }
+    if (!isClockSynced()) {
+        Serial.println("[PUBLISH] Deferred: clock not synchronized (no valid timestamp).");
+        return false;
+    }
+    if (!mqtt.connected()) {
+        Serial.println("[PUBLISH] Skipped: MQTT not connected.");
+        return false;
+    }
+    if (len + strlen(MQTT_TOPIC) + 10 > MQTT_BUF_SIZE) {
+        Serial.println("[PUBLISH] Error: message larger than MQTT buffer.");
+        return false;
+    }
+
+    bool ok = mqtt.publish(MQTT_TOPIC, json);   // retain = false
+    if (ok) {
+        publishCount++;
+        Serial.printf("[PUBLISH] Sent %u bytes to \"%s\" (QoS 0; server acceptance NOT confirmed)\n",
+                      (unsigned)len, MQTT_TOPIC);
+    } else {
+        publishFailCount++;
+        Serial.println("[PUBLISH] Failed (publish returned false).");
+    }
+    return ok;
+}
+
+// ==========================================
 // JSON: BUILDING, VALIDATION, DISPLAY
 // ==========================================
 
@@ -590,7 +739,7 @@ bool validateJsonMessage(const char *json) {
     return ok;
 }
 
-// One JSON cycle: build -> self-check -> display (no transmission yet)
+// One JSON cycle: build -> self-check -> display -> publish
 void jsonCycle() {
     static char jsonBuf[JSON_BUF_SIZE];
 
@@ -602,9 +751,15 @@ void jsonCycle() {
 
     bool localOk = validateJsonMessage(jsonBuf);
 
-    Serial.println("[JSON] Generated message (not transmitted: MQTT not enabled yet):");
+        Serial.println("[JSON] Generated message:");
     Serial.println(jsonBuf);
     Serial.printf("[JSON] Local self-check: %s\n", localOk ? "OK" : "FAILED");
+
+    if (!localOk) {
+        Serial.println("[PUBLISH] Skipped: local self-check failed.");
+        return;
+    }
+    publishTelemetry(jsonBuf, len);
 }
 
 // Connectivity summary (no secrets printed)
@@ -624,6 +779,13 @@ void displayStatus() {
         Serial.printf("- Clock  : Synchronized, UTC %s\n", ts);
     } else {
         Serial.println("- Clock  : NOT synchronized (timestamp omitted)");
+    }
+    if (!mqttConfigValid()) {
+        Serial.println("- MQTT   : Not configured (placeholders in secrets.h)");
+    } else {
+        Serial.printf("- MQTT   : %s (published: %lu, failed: %lu)\n",
+                      mqtt.connected() ? "Connected" : "Disconnected (retrying)",
+                      publishCount, publishFailCount);
     }
     Serial.println("========================================");
 }
