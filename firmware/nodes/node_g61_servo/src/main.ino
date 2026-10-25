@@ -49,6 +49,17 @@ const unsigned long SENSOR_INTERVAL_MS   = 2000;    // sensor read + serial repo
 const unsigned long JSON_INTERVAL_MS     = 10000;   // JSON build + MQTT publish + status report
 const unsigned long WIFI_RETRY_MS        = 10000;   // delay between Wi-Fi reconnection attempts
 const unsigned long STARTUP_NET_WAIT_MS  = 15000;   // max wait for Wi-Fi (+ NTP) at boot
+// --- PIR / motion settings ---
+const unsigned long PIR_POLL_MS               = 50;    // PIR is read every 50 ms (was every 2 s)
+const unsigned long MOTION_MIN_PUBLISH_GAP_MS = 2000;  // min gap between two event-triggered publications
+// --- DHT11 settings ---
+const int DHT_MAX_FAILS = 3;   // consecutive failed reads before the DHT11 data is declared invalid
+// --- MQ-2 calibration settings ---
+const unsigned long MQ2_WARMUP_MS        = 60000;   // heater warm-up before calibrating (longer = more stable)
+const int           MQ2_OVERSAMPLE       = 16;      // ADC reads averaged per sample (reduces ESP32 ADC noise)
+const int           MQ2_SPREAD_MAX       = 60;      // max (max-min) of averaged samples accepted as "stable" (ADC units)
+const int           MQ2_CAL_ATTEMPTS     = 3;       // attempts at boot
+const unsigned long MQ2_RECAL_INTERVAL_MS = 60000;  // retry interval while calibration is invalid
 const unsigned long MQTT_RETRY_MIN_MS    = 5000;    // first MQTT retry delay
 const unsigned long MQTT_RETRY_MAX_MS    = 60000;   // retry delay cap (exponential backoff)
 
@@ -127,6 +138,12 @@ unsigned long lastMqttAttemptMs = 0;
 bool mqttAttempted = false;
 unsigned long publishCount = 0;
 unsigned long publishFailCount = 0;
+unsigned long lastMq2CalMs = 0;
+int dhtFailCount = 0;
+unsigned long lastPirPollMs = 0;
+unsigned long lastMotionPublishMs = 0;
+bool lastPirState = false;
+bool motionLatched = false;   // true if motion was seen since the last JSON message was built
 
 // Reused JSON document (avoids repeated allocation of the document object)
 JsonDocument telemetryDoc;
@@ -136,11 +153,15 @@ void initializeSensors();
 bool calibrateMQ2(int samples = 50);
 bool calibrateWaterSensor();
 int readMQ2();
+int readMQ2Averaged();
+void warmUpMQ2();
+void maintainMQ2Calibration();
 bool detectSmoke(int currentVal, int baseline);
 bool readDHT11(float &temp, float &hum);
 int readWaterSensor();
 bool detectWaterLeak(int currentVal, int baseline);
 bool readPIR();
+void pollMotion();
 void controlServo(int angle);
 void collectMeasurements();
 void displayMeasurements();
@@ -173,8 +194,14 @@ void setup() {
     initializeSensors();
 
     // Startup calibration sequence (unchanged)
+    warmUpMQ2();
     Serial.println("[Calibration] Starting MQ-2 calibration (ambient air)...");
-    currentMeasurements.mq2CalibrationValid = calibrateMQ2();
+    for (int attempt = 1; attempt <= MQ2_CAL_ATTEMPTS && !currentMeasurements.mq2CalibrationValid; attempt++) {
+        Serial.printf("[Calibration] MQ-2 attempt %d/%d\n", attempt, MQ2_CAL_ATTEMPTS);
+        currentMeasurements.mq2CalibrationValid = calibrateMQ2();
+        if (!currentMeasurements.mq2CalibrationValid && attempt < MQ2_CAL_ATTEMPTS) delay(5000);
+    }
+    lastMq2CalMs = millis();
 
     Serial.println("[Calibration] Starting Water Sensor calibration (dry state)...");
     currentMeasurements.waterCalibrationValid = calibrateWaterSensor();
@@ -197,6 +224,8 @@ void loop() {
     maintainWiFi();
     reconnectMQTT();
     mqtt.loop();
+    maintainMQ2Calibration();
+    pollMotion();   // fast PIR polling + immediate servo reaction + event-triggered publication
 
     // Periodic sensor acquisition and serial report
     if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
@@ -223,6 +252,7 @@ void initializeSensors() {
     pinMode(PIN_PIR, INPUT);
 
     dht.begin();
+    delay(1500);   // DHT11 needs about 1 s after power-up before the first valid read
 
     // Servo configuration
     myservo.setPeriodHertz(50); // Standard 50Hz servo signal
@@ -230,14 +260,40 @@ void initializeSensors() {
     controlServo(0); // Initial position set to 0 degrees
 }
 
+// Averages several ADC reads to reduce the ESP32 ADC noise.
+int readMQ2Averaged() {
+    long sum = 0;
+    for (int i = 0; i < MQ2_OVERSAMPLE; i++) {
+        sum += analogRead(PIN_MQ2);
+        delayMicroseconds(200);
+    }
+    return (int)(sum / MQ2_OVERSAMPLE);
+}
+
+// The MQ-2 heater needs time before its output settles. Calibrating right after power-up
+// gives a drifting signal, so we wait first. Progress is printed every 10 s.
+void warmUpMQ2() {
+    Serial.printf("[Calibration] MQ-2 warm-up for %lu s (keep the sensor in clean air)...\n", MQ2_WARMUP_MS / 1000);
+    unsigned long start = millis();
+    unsigned long lastPrint = 0;
+    while (millis() - start < MQ2_WARMUP_MS) {
+        if (millis() - lastPrint >= 10000) {
+            lastPrint = millis();
+            Serial.printf("   warm-up %lu s / %lu s, MQ-2 raw = %d\n",
+                          (millis() - start) / 1000, MQ2_WARMUP_MS / 1000, readMQ2Averaged());
+        }
+        delay(100);
+    }
+}
+
 bool calibrateMQ2(int samples) {
     long sum = 0;
     int minVal = 4095;
     int maxVal = 0;
 
-    // Collect samples to establish baseline readings
+    // Collect samples to establish baseline readings (each sample is an average of several reads)
     for (int i = 0; i < samples; i++) {
-        int val = analogRead(PIN_MQ2);
+        int val = readMQ2Averaged();
         sum += val;
         if (val < minVal) minVal = val;
         if (val > maxVal) maxVal = val;
@@ -249,16 +305,35 @@ bool calibrateMQ2(int samples) {
 
     currentMeasurements.mq2Baseline = average;
 
-    // Stability check: max spread must not exceed tolerance (40 units on 12-bit ADC)
-    if (spread < 40) {
+    Serial.printf("   MQ-2 calibration data: avg=%d, min=%d, max=%d, spread=%d (limit %d)\n",
+                  average, minVal, maxVal, spread, MQ2_SPREAD_MAX);
+
+    // A reading stuck at the ADC limits means the sensor is not wired correctly
+    if (average < 20 || average > 4000) {
+        currentMeasurements.mq2Stable = false;
+        Serial.println("-> MQ-2 Warning: value at the ADC limit. Check wiring (AO to GPIO34, VCC 5V, GND) and the voltage divider.");
+        return false;
+    }
+
+    // Stability check: max spread must not exceed the tolerance
+    if (spread < MQ2_SPREAD_MAX) {
         currentMeasurements.mq2Stable = true;
         Serial.printf("-> MQ-2 Calibrated successfully. Baseline (ADC): %d (Stability OK)\n", average);
         return true;
     } else {
         currentMeasurements.mq2Stable = false;
-        Serial.println("-> MQ-2 Warning: Unstable environment detected during calibration.");
+        Serial.println("-> MQ-2 Warning: unstable signal during calibration (warm-up too short, floating AO pin or noisy supply).");
         return false;
     }
+}
+
+// While the calibration is invalid, retry every MQ2_RECAL_INTERVAL_MS (the sensor keeps warming up).
+void maintainMQ2Calibration() {
+    if (currentMeasurements.mq2CalibrationValid) return;
+    if (millis() - lastMq2CalMs < MQ2_RECAL_INTERVAL_MS) return;
+    lastMq2CalMs = millis();
+    Serial.println("[Calibration] MQ-2 retry (previous calibration invalid)...");
+    currentMeasurements.mq2CalibrationValid = calibrateMQ2();
 }
 
 bool calibrateWaterSensor() {
@@ -284,8 +359,8 @@ int readMQ2() {
 }
 
 bool detectSmoke(int currentVal, int baseline) {
-    // Relative detection threshold: triggers when value exceeds baseline by > 150 ADC units
-    const int smokeDeltaThreshold = 150;
+    // Relative detection threshold: triggers when value exceeds baseline by > 250 ADC units
+    const int smokeDeltaThreshold = 250;
     if (!currentMeasurements.mq2CalibrationValid) return false;
 
     return (currentVal - baseline) > smokeDeltaThreshold;
@@ -297,6 +372,9 @@ bool readDHT11(float &temp, float &hum) {
 
     if (isnan(h) || isnan(t)) {
         return false; // Failed to read from sensor
+    }
+    if (h < 0.0f || h > 100.0f || t < -40.0f || t > 85.0f) {
+        return false; // Implausible value (corrupted frame)
     }
     temp = t;
     hum = h;
@@ -322,6 +400,33 @@ bool readPIR() {
     return digitalRead(PIN_PIR) == HIGH;
 }
 
+// Called on every loop iteration but runs every PIR_POLL_MS.
+// - updates the motion state quickly (a short pulse is no longer missed between two 2 s reports)
+// - moves the servo immediately on a motion edge
+// - latches motion so the next JSON reports it even if the PIR returned to LOW before publication
+// - publishes right away on a motion start (rate limited), instead of waiting for the 10 s cycle
+void pollMotion() {
+    unsigned long now = millis();
+    if (now - lastPirPollMs < PIR_POLL_MS) return;
+    lastPirPollMs = now;
+
+    bool state = readPIR();
+    currentMeasurements.motionDetected = state;
+    if (state) motionLatched = true;
+
+    if (state != lastPirState) {
+        lastPirState = state;
+        Serial.printf("[PIR] Motion %s\n", state ? "STARTED" : "ended");
+        controlServo(state ? 90 : 0);   // 90 deg upon motion, 0 deg otherwise (command only, position not verified)
+
+        if (state && (now - lastMotionPublishMs >= MOTION_MIN_PUBLISH_GAP_MS)) {
+            lastMotionPublishMs = now;
+            lastJsonMs = now;   // restart the periodic cycle so we do not publish twice in a row
+            jsonCycle();
+        }
+    }
+}
+
 void controlServo(int angle) {
     // Constrain target angle between 0 and 180 degrees
     if (angle < 0) angle = 0;
@@ -340,10 +445,16 @@ void controlServo(int angle) {
 void collectMeasurements() {
     // 1. DHT11 Readout
     float t = 0, h = 0;
-    currentMeasurements.dhtValid = readDHT11(t, h);
-    if (currentMeasurements.dhtValid) {
+    if (readDHT11(t, h)) {
         currentMeasurements.temperature = t;
         currentMeasurements.humidity = h;
+        currentMeasurements.dhtValid = true;
+        dhtFailCount = 0;
+    } else {
+        dhtFailCount++;
+        Serial.printf("[DHT11] Read failed (%d consecutive)\n", dhtFailCount);
+        // One or two isolated failures keep the previous (recent) value; after DHT_MAX_FAILS it becomes invalid
+        if (dhtFailCount >= DHT_MAX_FAILS) currentMeasurements.dhtValid = false;
     }
 
     // 2. MQ-2 Readout
@@ -354,15 +465,7 @@ void collectMeasurements() {
     int waterVal = readWaterSensor();
     currentMeasurements.waterLeakDetected = detectWaterLeak(waterVal, currentMeasurements.waterDryBaseline);
 
-    // 4. PIR Readout
-    currentMeasurements.motionDetected = readPIR();
-
-    // 5. Servo Interaction (Example: turn to 90° upon motion, 0° otherwise)
-    if (currentMeasurements.motionDetected) {
-        controlServo(90);
-    } else {
-        controlServo(0);
-    }
+     // 4. PIR and servo: handled continuously by pollMotion() (called from loop())
 }
 
 void displayMeasurements() {
@@ -374,7 +477,7 @@ void displayMeasurements() {
         Serial.printf("- Temperature : %.1f °C\n", currentMeasurements.temperature);
         Serial.printf("- Humidity    : %.1f %%\n", currentMeasurements.humidity);
     } else {
-        Serial.println("- DHT11       : Read error or invalid sensor data");
+        Serial.printf("- DHT11       : Read error or invalid sensor data (%d consecutive failures; check DATA on GPIO4, VCC 3V3, GND)\n", dhtFailCount);
     }
 
     // Motion Detection (PIR)
@@ -398,7 +501,7 @@ void displayMeasurements() {
             currentMeasurements.mq2Stable ? "Stable" : "Unstable",
             currentMeasurements.smokeDetected ? "SMOKE ALARM" : "Normal");
     } else {
-        Serial.println("- MQ-2 (Gas)  : Calibration Unavailable");
+        Serial.printf("- MQ-2 (Gas)  : Calibration Unavailable (Raw=%d, retrying)\n", currentMeasurements.mq2Raw);
     }
 
     // Servo Motor Status
@@ -658,7 +761,7 @@ size_t buildTelemetryJSON(char *out, size_t outSize) {
     }
 
     // PIR
-    m["motion_detected"] = currentMeasurements.motionDetected;
+    m["motion_detected"] = currentMeasurements.motionDetected || motionLatched;
 
     // Servo: no position feedback -> "current" = last commanded angle
     m["servo_current_angle_deg"] = currentMeasurements.lastCommandedAngle;
@@ -749,6 +852,7 @@ void jsonCycle() {
         return;
     }
 
+    motionLatched = false;   // motion seen so far is now included in this message
     bool localOk = validateJsonMessage(jsonBuf);
 
         Serial.println("[JSON] Generated message:");
