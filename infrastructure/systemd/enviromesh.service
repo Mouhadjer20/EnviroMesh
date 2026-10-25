@@ -1,0 +1,39 @@
+# ==============================================================================
+# EnviroMesh — Core Stack Systemd Service
+# Manages the complete Docker Compose container stack on boot.
+#
+# Installation on Raspberry Pi / Linux Server:
+#   sudo cp infrastructure/systemd/enviromesh.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable enviromesh.service
+#   sudo systemctl start enviromesh.service
+#
+# Commands:
+#   sudo systemctl status enviromesh.service
+#   sudo journalctl -u enviromesh.service -f
+# ==============================================================================
+
+[Unit]
+Description=EnviroMesh IoT Core Platform (Docker Compose Stack)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Adjust WorkingDirectory to the absolute path where EnviroMesh is installed:
+WorkingDirectory=/home/pi/EnviroMesh
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose restart
+TimeoutStartSec=0
+
+# Security and Resource Settings
+User=pi
+Group=docker
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

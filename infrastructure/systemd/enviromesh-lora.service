@@ -1,0 +1,39 @@
+# ==============================================================================
+# EnviroMesh — Physical LoRa Concentrator Systemd Service (SX1278 SPI Receiver)
+# Runs natively on the Raspberry Pi host OS where hardware SPI (/dev/spidev0.0)
+# and GPIO pins are directly accessible.
+#
+# Installation on Raspberry Pi:
+#   sudo cp infrastructure/systemd/enviromesh-lora.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable enviromesh-lora.service
+#   sudo systemctl start enviromesh-lora.service
+# ==============================================================================
+
+[Unit]
+Description=EnviroMesh SX1278 LoRa Receiver Service
+After=network.target enviromesh.service
+Wants=enviromesh.service
+
+[Service]
+Type=simple
+# Path to backend directory on Raspberry Pi:
+WorkingDirectory=/home/pi/EnviroMesh/raspberry_pi/backend
+
+# Executes the LoRa receiver using the project's virtualenv Python:
+ExecStart=/home/pi/EnviroMesh/.venv/bin/python3 -m services.lora_receiver
+
+Restart=always
+RestartSec=5s
+
+# Run as pi user (must be member of spi, gpio, dialout groups)
+User=pi
+Group=pi
+
+# Ensure immediate logging to systemd journal
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

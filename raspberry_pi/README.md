@@ -196,19 +196,20 @@ docker compose ps
   - Token issuance (`/auth/login`) with `role` (`admin`, `zone_technician`) and `allowed_zones`.
   - Dependency guards (`get_current_user`, `require_admin`).
 - [ ] Build interactive Web Dashboard (replace placeholder in `dashboard/index.html` with responsive real-time charts via Chart.js / React and WebSocket telemetry streaming).
-- [ ] Configure EMQX topic-level Access Control Lists (ACLs) to enforce zone-isolated MQTT topics.
+- [x] Configure EMQX topic-level Access Control Lists (ACLs) to enforce zone-isolated MQTT topics ([`infrastructure/emqx/acl.conf`](../infrastructure/emqx/acl.conf)).
 
 ### Phase 5: Hardware Field Testing & Video Subsystem
 - [ ] Deploy MediaMTX RTSP proxy on RPi to handle video feeds from ESP32-CAM nodes.
 - [ ] Install physical SX1278 module on outdoor RPi enclosure with tuned 433 MHz antenna.
 - [ ] Field range testing: measure packet loss, RSSI, and SNR at distances from 50m to 1km.
-- [ ] Configure systemd service files (`infrastructure/systemd/enviromesh-gateway.service`) for auto-start on boot.
+- [x] Configure systemd service files ([`infrastructure/systemd/enviromesh.service`](../infrastructure/systemd/enviromesh.service) and [`infrastructure/systemd/enviromesh-lora.service`](../infrastructure/systemd/enviromesh-lora.service)) for auto-start on boot.
 
 ---
 
 ## 7. Related Documentation
 
 - Project Root Specification: [README.md](../README.md)
+- Infrastructure Layer: [infrastructure/README.md](../infrastructure/README.md)
 - Firmware Documentation: [firmware/README.md](../firmware/README.md)
 - Backend Deep Dive: [backend/README.md](backend/README.md)
 - Database Layer: [db/README.md](db/README.md)
