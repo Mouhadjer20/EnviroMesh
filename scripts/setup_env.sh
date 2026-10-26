@@ -80,7 +80,9 @@ if [ -d ".venv" ]; then
     echo -e "  ✔ Virtual environment (.venv) detected."
 else
     echo -e "  ℹ No .venv detected. Creating a Python virtual environment..."
-    python3 -m venv .venv
+    # Use --system-site-packages so system-level RPi hardware drivers (python3-spidev, python3-rpi.gpio)
+    # installed via apt are directly accessible inside the virtual environment without compiling C extensions.
+    python3 -m venv --system-site-packages .venv
     echo -e "  ✔ Created virtual environment in ${PROJECT_ROOT}/.venv"
 fi
 
@@ -91,11 +93,15 @@ if [ -f ".venv/bin/activate" ]; then
     pip install --quiet --upgrade pip || true
     if [ -f "raspberry_pi/backend/requirements.txt" ]; then
         if pip install -r raspberry_pi/backend/requirements.txt; then
-            echo -e "  ✔ Installed requirements from raspberry_pi/backend/requirements.txt"
+            echo -e "  ✔ Installed core requirements from raspberry_pi/backend/requirements.txt"
         else
-            echo -e "  ${YELLOW}Warning: Could not install all dependencies in .venv.${NC}"
-            echo -e "  ${YELLOW}The backend also runs isolated in Docker with fully prebuilt dependencies.${NC}"
+            echo -e "  ${YELLOW}Warning: Could not install core dependencies in .venv.${NC}"
         fi
+    fi
+    # Optional hardware dependencies for LoRa SX1278 (on Linux / RPi)
+    if [ -f "raspberry_pi/backend/requirements-hardware.txt" ] && [ "$(uname -s)" = "Linux" ]; then
+        pip install -r raspberry_pi/backend/requirements-hardware.txt 2>/dev/null && \
+            echo -e "  ✔ Installed LoRa hardware drivers (spidev/RPi.GPIO)" || true
     fi
     deactivate || true
 fi
