@@ -6,13 +6,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies for psycopg2-binary
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install Python dependencies (psycopg2-binary ships prebuilt — no gcc needed)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 

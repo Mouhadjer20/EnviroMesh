@@ -93,8 +93,8 @@ if [ -f ".venv/bin/activate" ]; then
         if pip install -r raspberry_pi/backend/requirements.txt; then
             echo -e "  ✔ Installed requirements from raspberry_pi/backend/requirements.txt"
         else
-            echo -e "  ${YELLOW}Notice: Some packages (e.g. psycopg2-binary on Python 3.14+) may not have prebuilt wheels on your host Python.${NC}"
-            echo -e "  ${YELLOW}The backend runs in Docker (Python 3.11) where dependencies are fully supported.${NC}"
+            echo -e "  ${YELLOW}Warning: Could not install all dependencies in .venv.${NC}"
+            echo -e "  ${YELLOW}The backend also runs isolated in Docker with fully prebuilt dependencies.${NC}"
         fi
     fi
     deactivate || true

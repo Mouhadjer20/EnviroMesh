@@ -7,8 +7,14 @@ uvicorn[standard]==0.27.1
 # MQTT client for consuming telemetry from EMQX
 paho-mqtt==2.1.0
 
-# PostgreSQL / TimescaleDB driver
+# PostgreSQL / TimescaleDB driver — psycopg2-binary (prebuilt wheel, no gcc needed)
 psycopg2-binary==2.9.9
 
 # Environment variable loading
 python-dotenv==1.0.0
+
+# RPi hardware drivers (LoRa SX1278 via SPI + GPIO reset pin).
+# These are only available on Raspberry Pi hardware; on other platforms (Mac, x86 Docker)
+# the import is caught gracefully and the backend runs in software-only mode.
+spidev==3.6
+RPi.GPIO==0.7.1
