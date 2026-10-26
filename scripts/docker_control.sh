@@ -60,7 +60,7 @@ cmd_start() {
         cp .env.example .env
     fi
 
-    docker compose up -d --remove-orphans
+    docker compose up -d --build --remove-orphans
 
     # -- Health wait ---------------------------------------------------------
     # docker compose up -d returns before containers are fully ready.

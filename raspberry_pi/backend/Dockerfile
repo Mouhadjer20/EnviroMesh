@@ -6,9 +6,16 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install Python dependencies (psycopg2-binary ships prebuilt — no gcc needed)
-COPY requirements.txt .
+# Install build dependencies for compiling hardware extensions (spidev, RPi.GPIO)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (core + optional hardware drivers)
+COPY requirements.txt requirements-hardware.txt ./
 RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements-hardware.txt || true
 
 # ---------------------------------------------------------------
 # Runtime stage

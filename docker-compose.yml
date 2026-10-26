@@ -87,6 +87,9 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    privileged: true
+    volumes:
+      - /dev:/dev
     networks:
       - enviromesh
 
