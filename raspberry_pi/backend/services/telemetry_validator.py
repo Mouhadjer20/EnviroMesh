@@ -13,6 +13,7 @@ METRIC_RANGES = {
     "gas_ppm": (0, 10000),
     "temperature_c": (-40, 85),
     "humidity": (0, 100),
+    "humidity_pct": (0, 100),
     "pressure_hpa": (300, 1100),
     "water_leak": (0, 1),
     "motion_detected": (0, 1),
@@ -31,10 +32,21 @@ def validate(telemetry: dict) -> bool:
         return False
 
     metrics = telemetry.get("metrics", {})
+    if not isinstance(metrics, dict):
+        logger.warning("Invalid telemetry: metrics is not a dict")
+        return False
+
     for metric, value in metrics.items():
+        if value is None:
+            continue
         if metric in METRIC_RANGES:
             low, high = METRIC_RANGES[metric]
-            if not (low <= float(value) <= high):
+            try:
+                numeric_val = float(value)
+            except (ValueError, TypeError):
+                logger.warning("Metric %s has non-numeric value: %s", metric, value)
+                return False
+            if not (low <= numeric_val <= high):
                 logger.warning(
                     "Metric %s out of range: %s (expected %s-%s)",
                     metric,

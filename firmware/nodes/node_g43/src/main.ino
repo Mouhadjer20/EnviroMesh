@@ -1,19 +1,19 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "secrets.h"
+//#include "secrets.h"
 
 // Identifiants Wi-Fi
-const char* ssid = WIFI_SSID;
-const char* password = WIFI_PASSWORD;
+const char* ssid = "fh_468548";
+const char* password = "wlanb97ab7";
 
 // Paramètres du Broker MQTT
-const char* mqtt_broker = MQTT_BROKER_IP; // Adresse IP broker
-const int mqtt_port = MQTT_PORT;          // Port MQTT par défaut
+const char* mqtt_broker = "192.168.1.9"; // Adresse IP broker
+const int mqtt_port = 1883;          // Port MQTT par défaut
 const char* mqtt_topic = "enviromesh/devices/G43/telemetry";
 // Identifiants d'authentification EMQX (depuis le .env)
-const char* mqtt_username = MQTT_USERNAME;
-const char* mqtt_password = MQTT_PASSWORD;
+const char* mqtt_username = "enviromesh_backend";
+const char* mqtt_password = "REPLACE_WITH_ANOTHER_LONG_RANDOM_PASSWORD";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
