@@ -28,8 +28,12 @@ if ENV_FILE.exists():
     except ImportError:
         pass
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger("lora_injector")
+try:
+    from services.colored_logger import setup_colored_logging
+    logger = setup_colored_logging(name="lora_injector")
+except ImportError:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logger = logging.getLogger("lora_injector")
 
 try:
     from services.telemetry_validator import validate
@@ -53,7 +57,7 @@ def inject_lora_packet(raw_payload: str, device_id: str = "G11"):
         logger.warning("LoRa packet is not valid JSON: %s (error: %s)", raw_payload, exc)
 
     extracted_device = telemetry.get("device_id") if isinstance(telemetry, dict) else device_id
-    write_raw_packet(extracted_device or "unknown", "LoRa", raw_payload.encode("utf-8"), parsed)
+    write_raw_packet(extracted_device, "LoRa", raw_payload.encode("utf-8"), parsed)
     logger.info("✔ Raw packet logged into 'raw_sensor_packets' hypertable (parsed=%s)", parsed)
 
     if not parsed:

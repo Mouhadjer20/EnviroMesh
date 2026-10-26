@@ -60,15 +60,18 @@ IRQ_PAYLOAD_CRC_ERROR = 0x20
 # These are imported lazily inside the functions that need them so the
 # module can be safely imported on any platform (e.g. x86 Docker on dev Mac).
 _spidev_available = False
+_spidev_error: str = ""
 try:
     import spidev as _spidev_mod
     import RPi.GPIO as GPIO  # noqa: F401
     _spidev_available = True
-except ModuleNotFoundError:
+except Exception as _hw_exc:
+    _spidev_error = str(_hw_exc)
     logger = logging.getLogger("lora_receiver")  # ensure logger exists early
     logger.warning(
-        "spidev / RPi.GPIO not available — LoRa hardware receiver disabled. "
-        "Running in software-only mode."
+        "LoRa hardware disabled — could not import spidev/RPi.GPIO: %s. "
+        "Install them on the RPi with: pip install spidev RPi.GPIO",
+        _hw_exc,
     )
 
 spi = None
@@ -93,6 +96,7 @@ def write_register(reg, value):
 
 def reset_module():
     import RPi.GPIO as GPIO
+    GPIO.setmode(GPIO.BCM)   # use BCM pin numbering (RESET_PIN = GPIO25)
     GPIO.setwarnings(False)
     GPIO.setup(RESET_PIN, GPIO.OUT)
 
@@ -192,7 +196,7 @@ def process_packet(raw_payload: str):
 
     # Persist the raw packet for diagnostics / traceability.
     device_id = telemetry.get("device_id") if isinstance(telemetry, dict) else None
-    write_raw_packet(device_id or "unknown", "LoRa", raw_payload.encode("utf-8"), parsed)
+    write_raw_packet(device_id, "LoRa", raw_payload.encode("utf-8"), parsed)
 
     if not parsed:
         return
@@ -228,7 +232,11 @@ def run():
         )
         return
 
-    logging.basicConfig(level=logging.INFO)
+    try:
+        from .colored_logger import setup_colored_logging
+        setup_colored_logging(name="lora_receiver")
+    except ImportError:
+        logging.basicConfig(level=logging.INFO)
     logger.info("Initialisation du récepteur LoRa...")
     init_lora()
 

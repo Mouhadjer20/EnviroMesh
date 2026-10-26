@@ -134,50 +134,39 @@ void readDHTSensor() {
 // BUILD AND TRANSMIT ENVIROMESH TELEMETRY
 // =====================================================
 void sendLoRaTelemetry() {
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<384> doc;
 
-  // The node has no trusted UTC clock in this configuration.
-  // The receiving gateway must replace null with its UTC timestamp.
-  doc["timestamp"] = nullptr;
-
+  // device_id must be exactly 3 characters (e.g. "G41") to fit VARCHAR(3) in DB
   doc["device_id"] = DEVICE_ID;
-  doc["group_code"] = GROUP_CODE;
   doc["zone"] = DEVICE_ZONE;
   doc["protocol"] = "lora";
 
   JsonObject metrics = doc.createNestedObject("metrics");
 
-  // MQ-2 requires calibration before reporting a meaningful ppm value.
-  metrics["gas_ppm"] = nullptr;
+  // ADC and digital sensor values
   metrics["gas_adc_raw"] = mq2AnalogValue;
+  metrics["smoke_detected"] = (mq2DigitalState == SMOKE_TRIGGER_LEVEL);
 
-  metrics["smoke_detected"] =
-      (mq2DigitalState == SMOKE_TRIGGER_LEVEL);
-
+  // Send DHT readings formatted to 1 decimal place when valid
   if (dhtReadingValid) {
-    metrics["temperature_c"] = temperature;
-    metrics["humidity_pct"] = humidity;
-  } else {
-    metrics["temperature_c"] = nullptr;
-    metrics["humidity_pct"] = nullptr;
+    metrics["temperature_c"] = serialized(String(temperature, 1));
+    metrics["humidity_pct"] = serialized(String(humidity, 1));
   }
 
-  metrics["water_leak_detected"] =
-      (waterValue >= WATER_LEAK_THRESHOLD);
+  metrics["water_leak_detected"] = (waterValue >= WATER_LEAK_THRESHOLD);
 
   JsonObject status = doc.createNestedObject("status");
   status["uptime_ms"] = millis();
   status["packet_counter"] = ++packetCounter;
 
-  // RSSI and SNR are measured by the receiver, not this transmitter.
-  // The gateway will add rssi_dbm and snr_db after reception.
-
-  char payload[512];
+  // SX1278 hardware FIFO is 256 bytes maximum.
+  // Limiting payload buffer to 250 bytes guarantees complete packets are sent.
+  char payload[250];
 
   size_t payloadLength = serializeJson(doc, payload, sizeof(payload));
 
   if (payloadLength == 0 || payloadLength >= sizeof(payload)) {
-    Serial.println("ERROR: Telemetry JSON serialization failed");
+    Serial.println("ERROR: Telemetry JSON serialization failed or payload too large");
     return;
   }
 

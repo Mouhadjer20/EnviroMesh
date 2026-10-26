@@ -84,6 +84,9 @@ class TimescaleDBWriter:
         if self.conn is None:
             logger.debug("TimescaleDB not connected; skipping raw packet write")
             return None
+        # Enforce column size limits (device_id VARCHAR(3), protocol VARCHAR(20))
+        clean_device_id = device_id[:3] if device_id else None
+        clean_protocol = (protocol[:20] if protocol else "unknown")
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
@@ -93,8 +96,8 @@ class TimescaleDBWriter:
                     VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
-                        device_id,
-                        protocol,
+                        clean_device_id,
+                        clean_protocol,
                         psycopg2.Binary(payload)
                         if isinstance(payload, (bytes, bytearray))
                         else payload,
