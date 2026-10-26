@@ -240,6 +240,10 @@ def process_packet(raw_payload: str):
     if not parsed:
         return
 
+    # Normalize "status" to "metadata" if present
+    if isinstance(telemetry, dict) and "status" in telemetry and "metadata" not in telemetry:
+        telemetry["metadata"] = telemetry.pop("status")
+
     # 1. Validate via backend validator.
     if not validate(telemetry):
         logger.warning("LoRa telemetry failed validation, discarding: %s", telemetry)

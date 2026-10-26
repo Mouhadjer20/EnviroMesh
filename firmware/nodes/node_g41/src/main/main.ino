@@ -134,7 +134,11 @@ void readDHTSensor() {
 // BUILD AND TRANSMIT ENVIROMESH TELEMETRY
 // =====================================================
 void sendLoRaTelemetry() {
-  StaticJsonDocument<384> doc;
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<512> doc;
+#endif
 
   // device_id must be exactly 3 characters (e.g. "G41") to fit VARCHAR(3) in DB
   doc["device_id"] = DEVICE_ID;
@@ -147,17 +151,18 @@ void sendLoRaTelemetry() {
   metrics["gas_adc_raw"] = mq2AnalogValue;
   metrics["smoke_detected"] = (mq2DigitalState == SMOKE_TRIGGER_LEVEL);
 
-  // Send DHT readings formatted to 1 decimal place when valid
+  // Send DHT readings safely as rounded float numbers (no temporary String dangling pointers)
   if (dhtReadingValid) {
-    metrics["temperature_c"] = serialized(String(temperature, 1));
-    metrics["humidity_pct"] = serialized(String(humidity, 1));
+    metrics["temperature_c"] = round(temperature * 10.0) / 10.0;
+    metrics["humidity_pct"] = round(humidity * 10.0) / 10.0;
   }
 
   metrics["water_leak_detected"] = (waterValue >= WATER_LEAK_THRESHOLD);
 
-  JsonObject status = doc.createNestedObject("status");
-  status["uptime_ms"] = millis();
-  status["packet_counter"] = ++packetCounter;
+  // Store diagnostics in "metadata" (persisted to TimescaleDB metadata JSONB column)
+  JsonObject metadata = doc.createNestedObject("metadata");
+  metadata["uptime_ms"] = millis();
+  metadata["packet_counter"] = ++packetCounter;
 
   // SX1278 hardware FIFO is 256 bytes maximum.
   // Limiting payload buffer to 250 bytes guarantees complete packets are sent.
@@ -171,7 +176,9 @@ void sendLoRaTelemetry() {
   }
 
   Serial.println("\n--- LoRa Transmission ---");
-  Serial.print("Payload: ");
+  Serial.print("Payload (");
+  Serial.print(payloadLength);
+  Serial.print(" bytes): ");
   Serial.println(payload);
 
   if (LoRa.beginPacket() == 0) {
