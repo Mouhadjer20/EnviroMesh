@@ -36,11 +36,18 @@ try:
 except ImportError:
     mqtt = None
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("telemetry_simulator")
+BACKEND_DIR = ROOT_DIR / "raspberry_pi" / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+
+try:
+    from services.colored_logger import setup_colored_logging
+    logger = setup_colored_logging(name="telemetry_simulator")
+except ImportError:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    logger = logging.getLogger("telemetry_simulator")
 
 # Device Profiles
 DEVICE_PROFILES = {
