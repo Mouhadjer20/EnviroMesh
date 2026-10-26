@@ -61,13 +61,35 @@ cmd_start() {
     fi
 
     docker compose up -d --remove-orphans
+
+    # -- Health wait ---------------------------------------------------------
+    # docker compose up -d returns before containers are fully ready.
+    # Poll /api/health through Nginx until backend responds (max 60s).
+    local web_port="${WEB_PORT:-8080}"
+    echo -e "\n${YELLOW}⏳ Waiting for backend to become healthy...${NC}"
+    local max_wait=60 waited=0
+    until curl -sf "http://localhost:${web_port}/api/health" > /dev/null 2>&1; do
+        if [ "${waited}" -ge "${max_wait}" ]; then
+            echo -e "\n${RED}✘ Backend did not respond after ${max_wait}s. Check logs with:${NC}"
+            echo -e "  ./scripts/docker_control.sh logs backend"
+            break
+        fi
+        printf "  %ds / %ds ...\r" "${waited}" "${max_wait}"
+        sleep 3
+        waited=$((waited + 3))
+    done
+    if curl -sf "http://localhost:${web_port}/api/health" > /dev/null 2>&1; then
+        echo -e "${GREEN}✔ Backend is healthy!${NC}                    "
+    fi
+    # ------------------------------------------------------------------------
+
     echo -e "\n${GREEN}✔ Services started! Current status:${NC}"
     docker compose ps
     echo -e "\nService endpoints:"
-    echo -e "  • Web Dashboard & API Proxy: ${BLUE}http://localhost:8080${NC}"
+    echo -e "  • Web Dashboard & API Proxy: ${BLUE}http://localhost:${web_port}${NC}"
     echo -e "  • EMQX Dashboard:           ${BLUE}http://localhost:18083${NC} (admin)"
     echo -e "  • MQTT Broker Port:         ${BLUE}localhost:1883${NC}"
-    echo -e "  • Backend Health Endpoint:  ${BLUE}http://localhost:8080/api/health${NC}"
+    echo -e "  • Backend Health Endpoint:  ${BLUE}http://localhost:${web_port}/api/health${NC}"
 }
 
 cmd_stop() {
