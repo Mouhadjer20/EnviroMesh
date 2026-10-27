@@ -61,9 +61,10 @@ ESP32 Sensor Nodes (Wi-Fi / LoRa)
 
 ```
 raspberry_pi/backend/
-├── main.py                       # Application entry point: FastAPI app + threads
-├── requirements.txt              # Production Python dependencies
-├── Dockerfile                    # Multi-stage container build (python:3.11-slim)
+├── main.py                       # Application entry point: FastAPI app + MQTT + LoRa threads
+├── requirements.txt              # Production Python dependencies (fastapi, psycopg2-binary, paho-mqtt)
+├── requirements-hardware.txt     # Optional RPi hardware dependencies (spidev, RPi.GPIO)
+├── Dockerfile                    # Multi-stage container build with device access
 ├── .env                          # Local environment configuration
 │
 ├── routes/                       # FastAPI Route Handlers
@@ -73,12 +74,13 @@ raspberry_pi/backend/
 │   ├── alerts.py                 # Alert management & acknowledgment [Phase 4]
 │   └── users.py                  # User management & technician accounts [Phase 4]
 │
-├── services/                     # Ingestion & Persistence Core
+├── services/                     # Ingestion, Validation & Persistence Core
 │   ├── __init__.py               # Package initializer
+│   ├── colored_logger.py         # High-visibility ANSI colored logging
 │   ├── mqtt_subscriber.py        # Paho-MQTT v2 client; subscribes, decodes, persists
-│   ├── lora_receiver.py          # SX1278 SPI driver: polls IRQ, reads FIFO, persists
-│   ├── telemetry_validator.py    # Enforces metric types and valid ranges
-│   └── database_writer.py        # TimescaleDB hypertable writer via psycopg2
+│   ├── lora_receiver.py          # SX1278 SPI driver: polls IRQ, reads FIFO, normalizes & persists
+│   ├── telemetry_validator.py    # Enforces metric types and valid physical ranges
+│   └── database_writer.py        # TimescaleDB hypertable writer with VARCHAR(3) safety
 │
 └── auth/                         # Authentication & RBAC Architecture
     └── README.md                 # Specifications for JWT, bcrypt, and zone-scoped claims
@@ -97,22 +99,27 @@ raspberry_pi/backend/
   3. If valid, invokes `database_writer.write_telemetry(payload)`.
 
 ### 3.2. LoRa Receiver (`services/lora_receiver.py`)
-- Interfaces with the **SX1278** radio over SPI (`spidev` bus 0, device 0, max 100 kHz) and `RPi.GPIO`.
+- Interfaces with the **SX1278** radio over SPI (`spidev` bus 0, device 0, max 100 kHz) and `RPi.GPIO` (reset on `GPIO 25`).
 - Radio settings: Carrier `433 MHz`, SF `7`, BW `125 kHz`, CR `4/5`, explicit header, preamble 8.
-- Continuous loop polls `REG_IRQ_FLAGS` for `IRQ_RX_DONE`:
-  1. Reads packet bytes from `REG_FIFO`.
-  2. Always writes raw payload to `raw_sensor_packets` hypertable (enables forensic diagnostics).
-  3. Parses JSON and validates metrics.
-  4. Persists structured data to `sensor_telemetry`.
+- **Hardware Abstraction & Graceful Fallback:**
+  - On Raspberry Pi hardware, the driver initialises the SX1278 transceiver and toggles the hardware reset pin.
+  - On non-RPi platforms (macOS, Windows, or x86 development containers) where `spidev` or `RPi.GPIO` are absent, the driver logs a warning and exits cleanly without crashing the FastAPI server or MQTT subscriber.
+- **Transceiver Diagnostics & Heartbeat:**
+  - Logs periodic status checks every 60 seconds with `REG_OP_MODE` and `REG_IRQ_FLAGS` to track radio operational health.
+- **Continuous Receiver Loop (`REG_IRQ_FLAGS`):**
+  1. Reads FIFO bytes up to length reported by `REG_RX_NB_BYTES`.
+  2. Always writes raw byte payload to `raw_sensor_packets` hypertable for forensics and traceability.
+  3. Maps compact/legacy payload keys: normalizes `"status"` dictionaries to `"metadata"`.
+  4. Validates metrics and persists structured telemetry to `sensor_telemetry`.
 
 > [!NOTE]
-> `spidev` and `RPi.GPIO` require physical Raspberry Pi hardware. When developing on macOS, Windows, or cloud environments, use our test harnesses:
+> When testing without physical SX1278 hardware, use our built-in test utilities:
 > - [`../../scripts/simulate_telemetry.py`](../../scripts/simulate_telemetry.py): Injects telemetry through MQTT.
-> - [`../../scripts/lora_packet_inject.py`](../../scripts/lora_packet_inject.py): Tests the LoRa parser and database writer directly.
+> - [`../../scripts/lora_packet_inject.py`](../../scripts/lora_packet_inject.py): Tests the LoRa packet processing pipeline and database writer directly.
 
 ### 3.3. Telemetry Validator (`services/telemetry_validator.py`)
 Rejects malformed telemetry before database insertion:
-- Verifies dictionary structure and presence of `device_id`.
+- Verifies dictionary structure and presence of valid `device_id`.
 - Validates supported metrics against strict physical boundaries:
   - `gas_ppm`: 0 to 10,000 ppm
   - `temperature_c`: -40°C to +85°C
@@ -125,6 +132,9 @@ Rejects malformed telemetry before database insertion:
 - Maintains a robust connection to PostgreSQL/TimescaleDB with `autocommit = True`.
 - `write_telemetry(telemetry)`: Inserts into `sensor_telemetry` (`timestamp`, `device_id`, `zone`, `metrics` JSONB, `received_at`, `protocol`, `rssi`, `metadata` JSONB).
 - `write_raw_packet(device_id, protocol, payload, parsed)`: Inserts raw BYTEA payload into `raw_sensor_packets`.
+- **Defensive Boundary Clamping:**
+  - Enforces `device_id[:3]` to strictly fit PostgreSQL `VARCHAR(3)` columns, preventing unhandled database exceptions when oversized identifiers or corrupt frames arrive.
+  - Clamps `protocol[:20]` to fit database schema constraints.
 
 ---
 
@@ -152,23 +162,28 @@ FastAPI exposes interactive Swagger docs at `http://localhost:8080/api/docs` (or
 
 ## 5. Running the Backend
 
-### Method 1: Via Docker Compose (Recommended)
+### Method 1: Via Docker Compose with Hardware Passthrough (Recommended)
+The backend container is configured with `privileged: true` and `/dev:/dev` volume mapping in `docker-compose.yml`, granting full access to hardware SPI (`/dev/spidev0.0`) and GPIO memory directly inside Docker.
+
 ```bash
-# Starts EMQX, TimescaleDB, Backend, Dashboard, and Nginx together
+# Starts EMQX, TimescaleDB, Backend (with LoRa hardware), Dashboard, and Nginx
 ./scripts/docker_control.sh start
 
-# View live backend logs
+# Follow live colored backend logs
 ./scripts/docker_control.sh logs backend
 ```
 
-### Method 2: Native Local Development
+### Method 2: Native Local Development (Virtual Environment)
 ```bash
 cd raspberry_pi/backend
 
 # 1. Activate Python virtual environment
 source ../../.venv/bin/activate
 
-# 2. Run the main server (starts FastAPI + MQTT subscriber loop)
+# 2. On Raspberry Pi, install optional hardware drivers if needed:
+pip install -r requirements-hardware.txt
+
+# 3. Run the main server (starts FastAPI + MQTT subscriber + LoRa receiver thread)
 python main.py
 
 # Or run FastAPI only with hot-reloading:

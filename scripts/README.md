@@ -23,11 +23,11 @@ This directory contains command-line utilities and test harnesses designed to st
 | Script | Type | Description |
 |---|---|---|
 | [`setup_env.sh`](setup_env.sh) | Bash | Initializes local workspace, `.env` file, directory structure, permissions, and Python virtual environment (`.venv`). |
-| [`docker_control.sh`](docker_control.sh) | Bash | Manages the Docker Compose stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`): start, stop, logs, rebuild, and health. |
+| [`docker_control.sh`](docker_control.sh) | Bash | Manages the Docker Compose stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) with built-in `/api/health` wait polling. |
 | [`db_manage.sh`](db_manage.sh) | Bash | Controls PostgreSQL & TimescaleDB: migrations, reference data seeding, verification queries, interactive `psql` shell, and resets. |
 | [`simulate_telemetry.py`](simulate_telemetry.py) | Python | Synthetic telemetry generator for field nodes (`G11`, `G41`, `G31`, `G61`) over MQTT. Supports anomaly injection (gas leak, fire, water leak). |
 | [`mqtt_monitor.py`](mqtt_monitor.py) | Python | Real-time terminal dashboard subscribing to MQTT topics (`enviromesh/#`), displaying live formatted readings and alerts. |
-| [`check_health.py`](check_health.py) | Python | Automated diagnostic tool checking connectivity to Nginx, FastAPI backend, EMQX broker, and TimescaleDB database. |
+| [`check_health.py`](check_health.py) | Python | Automated ANSI-colored diagnostic tool displaying local LAN IP and checking connectivity to Nginx, FastAPI backend, EMQX, and TimescaleDB. |
 | [`lora_packet_inject.py`](lora_packet_inject.py) | Python | LoRa pipeline test harness; validates and writes raw & parsed LoRa packets to TimescaleDB without physical SX1278 hardware. |
 
 ---
@@ -45,7 +45,7 @@ Run this script first when cloning the repository or setting up a new developmen
 - Creates `.env` from `.env.example` if it does not exist.
 - Sets executable permissions on all scripts in `scripts/`.
 - Prepares directories for infrastructure, backend, dashboard, and firmware.
-- Creates and sets up Python virtual environment (`.venv`) with backend dependencies.
+- Creates and sets up Python virtual environment (`.venv`) with core and optional hardware dependencies.
 
 ---
 
@@ -54,13 +54,13 @@ Run this script first when cloning the repository or setting up a new developmen
 Control all five containerized microservices without needing long Docker commands:
 
 ```bash
-# Start all containers in the background
+# Start all containers in the background (polls /api/health until backend is ready)
 ./scripts/docker_control.sh start
 
 # Check container status, ports, and health
 ./scripts/docker_control.sh status
 
-# Follow real-time logs for all services (or specify one: backend, emqx, timescaledb)
+# Follow real-time colored logs for all services (or specify one: backend, emqx, timescaledb)
 ./scripts/docker_control.sh logs backend
 
 # Rebuild container images after making backend or dashboard changes
@@ -143,18 +143,18 @@ Monitor incoming telemetry on the broker live in the terminal:
 
 ## 6. System Health Diagnostic
 
-Verify all architectural layers in a single command:
+Verify all architectural layers in a single command with ANSI colored status indicators:
 
 ```bash
 ./scripts/check_health.py
 ```
 
-Outputs a status table covering:
-- Reverse Proxy (Nginx on port 8080)
-- Backend REST API (`/api/health`)
-- MQTT Broker (EMQX TCP on port 1883)
-- EMQX Web Console (port 18083)
-- TimescaleDB (PostgreSQL connection & extension verification)
+Outputs the detected LAN IP (useful for connecting field nodes and laptops) and a status table covering:
+- **Reverse Proxy** (Nginx on port 8080)
+- **Backend REST API** (HTTP on port 8080 `/api/health`)
+- **MQTT Broker** (EMQX TCP on port 1883)
+- **EMQX Web Console** (port 18083)
+- **TimescaleDB** (PostgreSQL connection & extension verification via `pg_isready`)
 
 ---
 

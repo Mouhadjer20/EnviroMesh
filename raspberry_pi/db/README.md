@@ -102,19 +102,21 @@ We provide an automated management utility: [`../../scripts/db_manage.sh`](../..
 2. **`raw_sensor_packets`** (Hypertable):
    - Partitioned on `received_at`.
    - Stores the exact `BYTEA` payload of every frame received over LoRa or MQTT before decoding.
+   - Enforces column bounds: `device_id VARCHAR(3)` and `protocol VARCHAR(20)`. The backend `database_writer` defensively clamps incoming fields to prevent database write failures.
    - Maintains traceability: `parsed` boolean flag and `parse_error` diagnostic string.
 
 ---
 
 ## 4. Seed Data & Reference Accounts (`seed/001_seed_registry.sql`)
 
-- **Default User Password:** **`password123`** (hashed with bcrypt).
+- **Default User Password:** **`password123`** (hashed with bcrypt via `pgcrypto`).
 - **Technician Accounts:** 20+ accounts provisioned for university student technicians with email format `<student_code>@etu.uni-usto.dz`.
 - **Pre-configured Devices:**
   - `G11`: Sector A Warehouse (LoRa — Group 1) ➔ MQ-2, DHT11, Water Sensor.
   - `G41`: Sector B Warehouse (LoRa — Group 4) ➔ MQ-2, DHT11, Water Sensor.
   - `G31`: Sector C Utility Room (Wi-Fi — Group 3) ➔ BMP280, MQ-2, Water Sensor.
-  - `G61`: Sector A Valve (Wi-Fi / BLE — Group 6) ➔ MQ-2, DHT11, Water Sensor, PIR Motion.
+  - `G61`: Sector A Valve (Wi-Fi — Group 6) ➔ MQ-2, DHT11, Water Sensor, PIR Motion, SG90 Servo.
+  - `G42` & `G43`: Test nodes configured in Group 4 for MQTT harness simulation.
 
 ---
 
