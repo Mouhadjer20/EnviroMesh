@@ -6,6 +6,12 @@
  * ESP32. Telemetry is built as JSON, timestamped in UTC via NTP, and published
  * over Wi-Fi to an MQTT broker on enviromesh/devices/G61/telemetry..
  * Copy secrets.h.example to secrets.h and fill it in before compiling.
+ * 
+ *   layout :
+ *   main.ino    : includes, constants, data structure, globals, prototypes, setup(), loop()
+ *   sensors.ino : sensors, calibration, PIR, servo, serial report
+ *   comms.ino   : Wi-Fi, NTP, BLE, MQTT, JSON
+ * Board setting: Tools > Partition Scheme > "Huge APP (3MB No OTA/1MB SPIFFS)"
  */
 
 #include <WiFi.h>
@@ -13,7 +19,15 @@
 #include <DHT.h>
 #include <ESP32Servo.h>
 #include <ArduinoJson.h>
-#include <PubSubClient.h>   // PubSubClient (Nick O'Leary)    
+#include <PubSubClient.h>   // PubSubClient (Nick O'Leary)   
+#include <BLEDevice.h>      // Bluetooth Low Energy (built into the ESP32 Arduino core)
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h> 
+
+#if !defined(CONFIG_BT_ENABLED)
+  #error Bluetooth is not enabled for this board. Select "ESP32 Dev Module".
+#endif
 
 #include "secrets.h"        // WIFI_SSID, WIFI_PASSWORD + MQTT
 
@@ -49,11 +63,32 @@ const unsigned long SENSOR_INTERVAL_MS   = 2000;    // sensor read + serial repo
 const unsigned long JSON_INTERVAL_MS     = 10000;   // JSON build + MQTT publish + status report
 const unsigned long WIFI_RETRY_MS        = 10000;   // delay between Wi-Fi reconnection attempts
 const unsigned long STARTUP_NET_WAIT_MS  = 15000;   // max wait for Wi-Fi (+ NTP) at boot
+// --- BLE (companion app) settings ---
+// The link uses the Nordic UART Service (NUS): a standard BLE "serial port" made of two characteristics.
+//   RX: the phone WRITES commands here   TX: the ESP32 NOTIFIES text reports here
+#define BLE_SERVICE_UUID "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_RX_UUID      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define BLE_TX_UUID      "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+// 1 = commands (OUVRIR / FERMER) are accepted only from a phone paired with the passkey. Recommended.
+// 0 = no pairing required (debug only).
+#define BLE_REQUIRE_PAIRING 1
+#ifndef BLE_PASSKEY
+  #define BLE_PASSKEY 123456   // 6 digits; override it in secrets.h and do not commit the real one
+#endif
+
+const char*         BT_DEVICE_NAME        = "EnviroMesh-G61";  // name shown when pairing the phone
+const unsigned long BT_REPORT_INTERVAL_MS = 2000;              // one text report every 2 s
+const unsigned long BT_OVERRIDE_MS        = 30000;             // an app command pauses PIR control of the servo for 30 s
+const size_t        BLE_CHUNK_BYTES       = 20;                // safe notification size with the default BLE MTU
+
 // --- PIR / motion settings ---
 const unsigned long PIR_POLL_MS               = 50;    // PIR is read every 50 ms (was every 2 s)
 const unsigned long MOTION_MIN_PUBLISH_GAP_MS = 2000;  // min gap between two event-triggered publications
+
 // --- DHT11 settings ---
 const int DHT_MAX_FAILS = 3;   // consecutive failed reads before the DHT11 data is declared invalid
+
 // --- MQ-2 calibration settings ---
 const unsigned long MQ2_WARMUP_MS        = 60000;   // heater warm-up before calibrating (longer = more stable)
 const int           MQ2_OVERSAMPLE       = 16;      // ADC reads averaged per sample (reduces ESP32 ADC noise)
@@ -71,7 +106,6 @@ const char* NTP_SERVER_2 = "time.google.com";
 const time_t MIN_VALID_EPOCH = 1767225600;
 
 const size_t JSON_BUF_SIZE = 512;   // serialized telemetry (about 330 bytes in practice)
-
 const uint16_t MQTT_BUF_SIZE = 640; // PubSubClient packet buffer (topic + header + payload)
 
 // Optional secrets.h settings with safe defaults
@@ -96,6 +130,8 @@ Servo myservo;
   WiFiClient netClient;
 #endif
 PubSubClient mqtt(netClient);
+BLEServer *bleServer = nullptr;
+BLECharacteristic *bleTx = nullptr;
 
 // --- Data Structure for Sensor Readings ---
 struct Measurements {
@@ -144,6 +180,16 @@ unsigned long lastPirPollMs = 0;
 unsigned long lastMotionPublishMs = 0;
 bool lastPirState = false;
 bool motionLatched = false;   // true if motion was seen since the last JSON message was built
+unsigned long lastBtReportMs = 0;
+unsigned long btOverrideUntilMs = 0;
+bool btOverrideActive = false;   // true while an app command has priority over the PIR
+String btRxLine;
+volatile bool bleClientConnected = false;
+volatile bool bleNeedAdvertise = false;
+bool bleLastReportedConnected = false;
+portMUX_TYPE bleMux = portMUX_INITIALIZER_UNLOCKED;
+char bleRxBuf[64];            // bytes written by the phone, filled by the BLE task, consumed by loop()
+volatile size_t bleRxLen = 0;
 
 // Reused JSON document (avoids repeated allocation of the document object)
 JsonDocument telemetryDoc;
@@ -162,6 +208,10 @@ int readWaterSensor();
 bool detectWaterLeak(int currentVal, int baseline);
 bool readPIR();
 void pollMotion();
+void initializeBluetooth();
+void bluetoothTask();
+void handleBtCommand(const String &cmd);
+void sendBtReport();
 void controlServo(int angle);
 void collectMeasurements();
 void displayMeasurements();
@@ -192,6 +242,7 @@ void setup() {
 
     // Initialize pins and sensor modules
     initializeSensors();
+    initializeBluetooth();
 
     // Startup calibration sequence (unchanged)
     warmUpMQ2();
@@ -206,7 +257,7 @@ void setup() {
     Serial.println("[Calibration] Starting Water Sensor calibration (dry state)...");
     currentMeasurements.waterCalibrationValid = calibrateWaterSensor();
 
-    // Wi-Fi (bounded wait; the loop keeps retrying afterwards)
+    // MQTT client setup (no connection yet), then Wi-Fi (bounded wait; the loop keeps retrying)
     initializeMQTT();
     connectWiFi();
     waitForNetworkAtStartup();
@@ -220,12 +271,13 @@ void setup() {
 void loop() {
     unsigned long now = millis();
 
-    // Keep Wi-Fi alive without blocking
+    // Keep Wi-Fi and MQTT alive without blocking
     maintainWiFi();
     reconnectMQTT();
     mqtt.loop();
     maintainMQ2Calibration();
     pollMotion();   // fast PIR polling + immediate servo reaction + event-triggered publication
+    bluetoothTask();   // app commands + text report over Bluetooth
 
     // Periodic sensor acquisition and serial report
     if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
@@ -240,656 +292,4 @@ void loop() {
         displayStatus();
         jsonCycle();
     }
-}
-
-// ==========================================
-// INITIALIZATION AND CALIBRATION FUNCTIONS
-// ==========================================
-
-void initializeSensors() {
-    pinMode(PIN_MQ2, INPUT);
-    pinMode(PIN_WATER, INPUT);
-    pinMode(PIN_PIR, INPUT);
-
-    dht.begin();
-    delay(1500);   // DHT11 needs about 1 s after power-up before the first valid read
-
-    // Servo configuration
-    myservo.setPeriodHertz(50); // Standard 50Hz servo signal
-    myservo.attach(PIN_SERVO, 500, 2400);
-    controlServo(0); // Initial position set to 0 degrees
-}
-
-// Averages several ADC reads to reduce the ESP32 ADC noise.
-int readMQ2Averaged() {
-    long sum = 0;
-    for (int i = 0; i < MQ2_OVERSAMPLE; i++) {
-        sum += analogRead(PIN_MQ2);
-        delayMicroseconds(200);
-    }
-    return (int)(sum / MQ2_OVERSAMPLE);
-}
-
-// The MQ-2 heater needs time before its output settles. Calibrating right after power-up
-// gives a drifting signal, so we wait first. Progress is printed every 10 s.
-void warmUpMQ2() {
-    Serial.printf("[Calibration] MQ-2 warm-up for %lu s (keep the sensor in clean air)...\n", MQ2_WARMUP_MS / 1000);
-    unsigned long start = millis();
-    unsigned long lastPrint = 0;
-    while (millis() - start < MQ2_WARMUP_MS) {
-        if (millis() - lastPrint >= 10000) {
-            lastPrint = millis();
-            Serial.printf("   warm-up %lu s / %lu s, MQ-2 raw = %d\n",
-                          (millis() - start) / 1000, MQ2_WARMUP_MS / 1000, readMQ2Averaged());
-        }
-        delay(100);
-    }
-}
-
-bool calibrateMQ2(int samples) {
-    long sum = 0;
-    int minVal = 4095;
-    int maxVal = 0;
-
-    // Collect samples to establish baseline readings (each sample is an average of several reads)
-    for (int i = 0; i < samples; i++) {
-        int val = readMQ2Averaged();
-        sum += val;
-        if (val < minVal) minVal = val;
-        if (val > maxVal) maxVal = val;
-        delay(50);
-    }
-
-    int average = sum / samples;
-    int spread = maxVal - minVal;
-
-    currentMeasurements.mq2Baseline = average;
-
-    Serial.printf("   MQ-2 calibration data: avg=%d, min=%d, max=%d, spread=%d (limit %d)\n",
-                  average, minVal, maxVal, spread, MQ2_SPREAD_MAX);
-
-    // A reading stuck at the ADC limits means the sensor is not wired correctly
-    if (average < 20 || average > 4000) {
-        currentMeasurements.mq2Stable = false;
-        Serial.println("-> MQ-2 Warning: value at the ADC limit. Check wiring (AO to GPIO34, VCC 5V, GND) and the voltage divider.");
-        return false;
-    }
-
-    // Stability check: max spread must not exceed the tolerance
-    if (spread < MQ2_SPREAD_MAX) {
-        currentMeasurements.mq2Stable = true;
-        Serial.printf("-> MQ-2 Calibrated successfully. Baseline (ADC): %d (Stability OK)\n", average);
-        return true;
-    } else {
-        currentMeasurements.mq2Stable = false;
-        Serial.println("-> MQ-2 Warning: unstable signal during calibration (warm-up too short, floating AO pin or noisy supply).");
-        return false;
-    }
-}
-
-// While the calibration is invalid, retry every MQ2_RECAL_INTERVAL_MS (the sensor keeps warming up).
-void maintainMQ2Calibration() {
-    if (currentMeasurements.mq2CalibrationValid) return;
-    if (millis() - lastMq2CalMs < MQ2_RECAL_INTERVAL_MS) return;
-    lastMq2CalMs = millis();
-    Serial.println("[Calibration] MQ-2 retry (previous calibration invalid)...");
-    currentMeasurements.mq2CalibrationValid = calibrateMQ2();
-}
-
-bool calibrateWaterSensor() {
-    // Acquire baseline reading under dry condition
-    long sum = 0;
-    int samples = 20;
-    for (int i = 0; i < samples; i++) {
-        sum += analogRead(PIN_WATER);
-        delay(20);
-    }
-    currentMeasurements.waterDryBaseline = sum / samples;
-    Serial.printf("-> Water Sensor Calibrated. Dry Baseline (ADC): %d\n", currentMeasurements.waterDryBaseline);
-    return true;
-}
-
-// ==========================================
-// READING AND PROCESSING FUNCTIONS
-// ==========================================
-
-int readMQ2() {
-    currentMeasurements.mq2Raw = analogRead(PIN_MQ2);
-    return currentMeasurements.mq2Raw;
-}
-
-bool detectSmoke(int currentVal, int baseline) {
-    // Relative detection threshold: triggers when value exceeds baseline by > 250 ADC units
-    const int smokeDeltaThreshold = 250;
-    if (!currentMeasurements.mq2CalibrationValid) return false;
-
-    return (currentVal - baseline) > smokeDeltaThreshold;
-}
-
-bool readDHT11(float &temp, float &hum) {
-    float h = dht.readHumidity();
-    float t = dht.readTemperature(); // Celsius
-
-    if (isnan(h) || isnan(t)) {
-        return false; // Failed to read from sensor
-    }
-    if (h < 0.0f || h > 100.0f || t < -40.0f || t > 85.0f) {
-        return false; // Implausible value (corrupted frame)
-    }
-    temp = t;
-    hum = h;
-    return true;
-}
-
-int readWaterSensor() {
-    currentMeasurements.waterRaw = analogRead(PIN_WATER);
-    return currentMeasurements.waterRaw;
-}
-
-bool detectWaterLeak(int currentVal, int baseline) {
-    if (!currentMeasurements.waterCalibrationValid) return false;
-
-    // Resistive sensor conductivity increases when wet, raising the ADC reading.
-    // Trigger threshold set to +200 ADC units relative to dry state.
-    const int waterDeltaThreshold = 200;
-    return (currentVal - baseline) > waterDeltaThreshold;
-}
-
-bool readPIR() {
-    // PIR sensor outputs HIGH (1) when motion is detected, LOW (0) otherwise
-    return digitalRead(PIN_PIR) == HIGH;
-}
-
-// Called on every loop iteration but runs every PIR_POLL_MS.
-// - updates the motion state quickly (a short pulse is no longer missed between two 2 s reports)
-// - moves the servo immediately on a motion edge
-// - latches motion so the next JSON reports it even if the PIR returned to LOW before publication
-// - publishes right away on a motion start (rate limited), instead of waiting for the 10 s cycle
-void pollMotion() {
-    unsigned long now = millis();
-    if (now - lastPirPollMs < PIR_POLL_MS) return;
-    lastPirPollMs = now;
-
-    bool state = readPIR();
-    currentMeasurements.motionDetected = state;
-    if (state) motionLatched = true;
-
-    if (state != lastPirState) {
-        lastPirState = state;
-        Serial.printf("[PIR] Motion %s\n", state ? "STARTED" : "ended");
-        controlServo(state ? 90 : 0);   // 90 deg upon motion, 0 deg otherwise (command only, position not verified)
-
-        if (state && (now - lastMotionPublishMs >= MOTION_MIN_PUBLISH_GAP_MS)) {
-            lastMotionPublishMs = now;
-            lastJsonMs = now;   // restart the periodic cycle so we do not publish twice in a row
-            jsonCycle();
-        }
-    }
-}
-
-void controlServo(int angle) {
-    // Constrain target angle between 0 and 180 degrees
-    if (angle < 0) angle = 0;
-    if (angle > 180) angle = 180;
-
-    currentMeasurements.targetAngle = angle;
-    myservo.write(angle);
-    currentMeasurements.lastCommandedAngle = angle; // Store last commanded angle
-    currentMeasurements.servoCommanded = true;      // Command sent; actual position NOT verified
-}
-
-// ==========================================
-// DATA COLLECTION AND DISPLAY
-// ==========================================
-
-void collectMeasurements() {
-    // 1. DHT11 Readout
-    float t = 0, h = 0;
-    if (readDHT11(t, h)) {
-        currentMeasurements.temperature = t;
-        currentMeasurements.humidity = h;
-        currentMeasurements.dhtValid = true;
-        dhtFailCount = 0;
-    } else {
-        dhtFailCount++;
-        Serial.printf("[DHT11] Read failed (%d consecutive)\n", dhtFailCount);
-        // One or two isolated failures keep the previous (recent) value; after DHT_MAX_FAILS it becomes invalid
-        if (dhtFailCount >= DHT_MAX_FAILS) currentMeasurements.dhtValid = false;
-    }
-
-    // 2. MQ-2 Readout
-    int mq2Val = readMQ2();
-    currentMeasurements.smokeDetected = detectSmoke(mq2Val, currentMeasurements.mq2Baseline);
-
-    // 3. Water Sensor Readout
-    int waterVal = readWaterSensor();
-    currentMeasurements.waterLeakDetected = detectWaterLeak(waterVal, currentMeasurements.waterDryBaseline);
-
-     // 4. PIR and servo: handled continuously by pollMotion() (called from loop())
-}
-
-void displayMeasurements() {
-    Serial.println("----------------------------------------");
-    Serial.println("[EnviroMesh Sensor Report]");
-
-    // Temperature & Humidity
-    if (currentMeasurements.dhtValid) {
-        Serial.printf("- Temperature : %.1f °C\n", currentMeasurements.temperature);
-        Serial.printf("- Humidity    : %.1f %%\n", currentMeasurements.humidity);
-    } else {
-        Serial.printf("- DHT11       : Read error or invalid sensor data (%d consecutive failures; check DATA on GPIO4, VCC 3V3, GND)\n", dhtFailCount);
-    }
-
-    // Motion Detection (PIR)
-    Serial.printf("- Motion      : %s\n", currentMeasurements.motionDetected ? "Detected" : "Not Detected");
-
-    // Water Leak
-    if (currentMeasurements.waterCalibrationValid) {
-        Serial.printf("- Water Leak  : %s (Raw: %d / Dry Ref: %d)\n",
-            currentMeasurements.waterLeakDetected ? "DETECTED" : "Not Detected",
-            currentMeasurements.waterRaw,
-            currentMeasurements.waterDryBaseline);
-    } else {
-        Serial.println("- Water Leak  : Invalid Calibration");
-    }
-
-    // MQ-2 Gas / Smoke
-    if (currentMeasurements.mq2CalibrationValid) {
-        Serial.printf("- MQ-2 (Gas)  : Ref=%d, Raw=%d, Stability=%s, Smoke=%s\n",
-            currentMeasurements.mq2Baseline,
-            currentMeasurements.mq2Raw,
-            currentMeasurements.mq2Stable ? "Stable" : "Unstable",
-            currentMeasurements.smokeDetected ? "SMOKE ALARM" : "Normal");
-    } else {
-        Serial.printf("- MQ-2 (Gas)  : Calibration Unavailable (Raw=%d, retrying)\n", currentMeasurements.mq2Raw);
-    }
-
-    // Servo Motor Status
-    Serial.printf("- SG90 Servo  : Target Angle = %d°, Last Commanded = %d°\n",
-        currentMeasurements.targetAngle,
-        currentMeasurements.lastCommandedAngle);
-}
-
-// ==========================================
-// WI-FI
-// ==========================================
-
-// Starts the connection and returns immediately (non-blocking).
-// The password is never printed.
-void connectWiFi() {
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    lastWifiAttemptMs = millis();
-    Serial.printf("[WiFi] Connecting to SSID \"%s\"...\n", WIFI_SSID);
-}
-
-// Called every loop: logs state changes, restarts NTP after (re)connection,
-// and retries periodically while disconnected.
-void maintainWiFi() {
-    bool connected = (WiFi.status() == WL_CONNECTED);
-
-    if (connected && !wifiWasConnected) {
-        Serial.printf("[WiFi] Connected. IP: %s, RSSI: %d dBm\n",
-                      WiFi.localIP().toString().c_str(), WiFi.RSSI());
-        initializeNTP();   // (re)start SNTP: forces a fresh synchronization
-    } else if (!connected && wifiWasConnected) {
-        Serial.println("[WiFi] Connection lost. Sensors keep running; retrying...");
-    }
-    wifiWasConnected = connected;
-
-    if (!connected && (millis() - lastWifiAttemptMs >= WIFI_RETRY_MS)) {
-        lastWifiAttemptMs = millis();
-        Serial.println("[WiFi] Reconnection attempt...");
-        WiFi.disconnect();
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    }
-}
-
-// ==========================================
-// NTP / TIMESTAMP
-// ==========================================
-
-// UTC with no offset and no daylight saving. SNTP then re-syncs periodically on its own.
-void initializeNTP() {
-#if ENABLE_NTP
-    configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    Serial.printf("[NTP] Synchronization requested (%s, %s)\n", NTP_SERVER_1, NTP_SERVER_2);
-#endif
-}
-
-// True once the system time is a plausible, synchronized date.
-bool isClockSynced() {
-    return time(nullptr) >= MIN_VALID_EPOCH;
-}
-
-// Writes the ISO 8601 UTC time into buf. Returns false if the time is not reliable
-// (no NTP sync: time() then returns ~0, i.e. 1970).
-bool getUtcTimestamp(char *buf, size_t len) {
-    time_t now = time(nullptr);
-    if (now < MIN_VALID_EPOCH) return false;
-    struct tm tmUtc;
-    gmtime_r(&now, &tmUtc);
-    strftime(buf, len, "%Y-%m-%dT%H:%M:%SZ", &tmUtc);
-    return true;
-}
-
-// Bounded wait at boot. If the network is slow, the loop keeps retrying.
-void waitForNetworkAtStartup() {
-    Serial.println("[System] Waiting for Wi-Fi (and NTP) (bounded)...");
-    unsigned long start = millis();
-    while (millis() - start < STARTUP_NET_WAIT_MS) {
-        maintainWiFi();
-        if (wifiWasConnected && (!ENABLE_NTP || isClockSynced())) break;
-        delay(250);
-    }
-    if (!wifiWasConnected) {
-        Serial.println("[System] Wi-Fi not connected yet; continuing, will keep retrying.");
-    } else if (ENABLE_NTP && !isClockSynced()) {
-        Serial.println("[System] Clock not synchronized yet; timestamp will be omitted until it is.");
-    } else if (ENABLE_NTP) {
-        char ts[25];
-        getUtcTimestamp(ts, sizeof(ts));
-        Serial.printf("[NTP] Clock synchronized: %s\n", ts);
-    }
-}
-
-// ==========================================
-// MQTT
-// ==========================================
-
-static bool isPlaceholder(const char *s) {
-    return s == nullptr || s[0] == '\0' || strstr(s, "REPLACE_ME") != nullptr;
-}
-
-// Broker and topic must have been set by the user in secrets.h.
-bool mqttConfigValid() {
-    return !isPlaceholder(MQTT_HOST) && !isPlaceholder(MQTT_TOPIC);
-}
-
-void initializeMQTT() {
-    if (!mqttConfigValid()) {
-        Serial.println("[MQTT] Broker/topic still set to placeholders in secrets.h. Publishing disabled.");
-        return;
-    }
-#if MQTT_USE_TLS
-    // Certificate verification stays ENABLED: the broker's CA certificate is required.
-    netClient.setCACert(MQTT_CA_CERT);
-#endif
-    mqtt.setServer(MQTT_HOST, MQTT_PORT);
-    mqtt.setBufferSize(MQTT_BUF_SIZE);
-    mqtt.setSocketTimeout(3);   // seconds; limits how long a dead connection can block the loop
-    mqtt.setKeepAlive(30);
-}
-
-// One connection attempt. The client ID is unique per board (device ID + MAC tail).
-bool connectMQTT() {
-    char clientId[48];
-    uint64_t mac = ESP.getEfuseMac();
-    snprintf(clientId, sizeof(clientId), "enviromesh-%s-%06X", DEVICE_ID, (uint32_t)(mac >> 24) & 0xFFFFFF);
-
-    Serial.printf("[MQTT] Connecting to %s:%d as %s...\n", MQTT_HOST, MQTT_PORT, clientId);
-
-    bool ok;
-    if (strlen(MQTT_USER) > 0) {
-        ok = mqtt.connect(clientId, MQTT_USER, MQTT_PASSWORD);
-    } else {
-        ok = mqtt.connect(clientId);
-    }
-
-    if (ok) {
-        Serial.println("[MQTT] Connected.");
-    } else {
-        Serial.printf("[MQTT] Connection failed, state=%d (see PubSubClient state codes)\n", mqtt.state());
-    }
-    return ok;
-}
-
-// Rate-limited reconnection with exponential backoff (5 s -> 60 s). Never loops.
-void reconnectMQTT() {
-    if (mqtt.connected()) {
-        mqttRetryMs = MQTT_RETRY_MIN_MS;
-        return;
-    }
-    if (!mqttConfigValid() || WiFi.status() != WL_CONNECTED) return;
-#if MQTT_USE_TLS
-    if (!isClockSynced()) return;   // certificate validation needs a correct date
-#endif
-    if (mqttAttempted && (millis() - lastMqttAttemptMs < mqttRetryMs)) return;
-
-    mqttAttempted = true;
-    lastMqttAttemptMs = millis();
-    if (!connectMQTT()) {
-        mqttRetryMs = min(mqttRetryMs * 2, MQTT_RETRY_MAX_MS);
-        Serial.printf("[MQTT] Next attempt in %lu s\n", mqttRetryMs / 1000);
-    }
-}
-
-// Publishes with QoS 0 (the only QoS PubSubClient supports for publishing).
-// A true return means "handed to the TCP socket", NOT "accepted/stored by the server".
-bool publishTelemetry(const char *json, size_t len) {
-    if (!mqttConfigValid()) {
-        Serial.println("[PUBLISH] Skipped: MQTT broker/topic not configured.");
-        return false;
-    }
-    if (!isClockSynced()) {
-        Serial.println("[PUBLISH] Deferred: clock not synchronized (no valid timestamp).");
-        return false;
-    }
-    if (!mqtt.connected()) {
-        Serial.println("[PUBLISH] Skipped: MQTT not connected.");
-        return false;
-    }
-    if (len + strlen(MQTT_TOPIC) + 10 > MQTT_BUF_SIZE) {
-        Serial.println("[PUBLISH] Error: message larger than MQTT buffer.");
-        return false;
-    }
-
-    bool ok = mqtt.publish(MQTT_TOPIC, json);   // retain = false
-    if (ok) {
-        publishCount++;
-        Serial.printf("[PUBLISH] Sent %u bytes to \"%s\" (QoS 0; server acceptance NOT confirmed)\n",
-                      (unsigned)len, MQTT_TOPIC);
-    } else {
-        publishFailCount++;
-        Serial.println("[PUBLISH] Failed (publish returned false).");
-    }
-    return ok;
-}
-
-// ==========================================
-// JSON: BUILDING, VALIDATION, DISPLAY
-// ==========================================
-
-// Represents unavailable data according to the chosen policy (null or omission)
-void markUnavailable(JsonObject obj, const char *key) {
-#if UNAVAILABLE_AS_NULL
-    obj[key] = nullptr;
-#else
-    (void)obj; (void)key;   // field omitted
-#endif
-}
-
-// Builds the telemetry JSON into out. Returns the length, or 0 on error.
-size_t buildTelemetryJSON(char *out, size_t outSize) {
-    telemetryDoc.clear();
-    JsonDocument &doc = telemetryDoc;
-
-    // Timestamp: only a real, synchronized UTC time; never a fake date
-    char ts[25];
-    if (getUtcTimestamp(ts, sizeof(ts))) {
-        doc["timestamp"] = ts;
-    } else {
-#if UNAVAILABLE_AS_NULL
-        doc["timestamp"] = nullptr;
-#endif
-    }
-
-    doc["device_id"]  = DEVICE_ID;
-    doc["group_code"] = GROUP_CODE;
-    doc["zone"]       = ZONE;
-    doc["protocol"]   = PROTOCOL;
-
-    // Nested "metrics" object
-    JsonObject m = doc["metrics"].to<JsonObject>();
-
-    // MQ-2: no validated ppm conversion -> unavailable (never the raw ADC value)
-    markUnavailable(m, "gas_ppm");
-
-    if (currentMeasurements.mq2CalibrationValid) {
-        m["smoke_detected"] = currentMeasurements.smokeDetected;
-    } else {
-        markUnavailable(m, "smoke_detected");
-    }
-
-    // DHT11: only if the current reading is valid
-    if (currentMeasurements.dhtValid) {
-        m["temperature_c"] = roundf(currentMeasurements.temperature * 10.0f) / 10.0f;
-        m["humidity_pct"]  = roundf(currentMeasurements.humidity * 10.0f) / 10.0f;
-    } else {
-        markUnavailable(m, "temperature_c");
-        markUnavailable(m, "humidity_pct");
-    }
-
-    // Water sensor: only valid if calibration succeeded
-    if (currentMeasurements.waterCalibrationValid) {
-        m["water_leak_detected"] = currentMeasurements.waterLeakDetected;
-    } else {
-        markUnavailable(m, "water_leak_detected");
-    }
-
-    // PIR
-    m["motion_detected"] = currentMeasurements.motionDetected || motionLatched;
-
-    // Servo: no position feedback -> "current" = last commanded angle
-    m["servo_current_angle_deg"] = currentMeasurements.lastCommandedAngle;
-    m["servo_target_angle_deg"]  = currentMeasurements.targetAngle;
-    m["servo_operation_status"]  = currentMeasurements.servoCommanded ? "commanded" : "unknown";
-
-    if (doc.overflowed()) return 0;
-    if (measureJson(doc) >= outSize) return 0;   // would not fit (needs room for '\0')
-
-    return serializeJson(doc, out, outSize);
-}
-
-// Local self-check: re-parses the produced JSON and verifies field names, types and
-// extra fields. Does NOT replace server-side validation.
-bool validateJsonMessage(const char *json) {
-    JsonDocument d;
-    DeserializationError err = deserializeJson(d, json);
-    if (err) {
-        Serial.printf("[JSON CHECK] Invalid syntax: %s\n", err.c_str());
-        return false;
-    }
-
-    bool ok = true;
-
-    // Unexpected root-level fields
-    const char *rootKeys[] = {"timestamp", "device_id", "group_code", "zone", "protocol", "metrics"};
-    for (JsonPair kv : d.as<JsonObject>()) {
-        bool known = false;
-        for (const char *k : rootKeys) if (strcmp(kv.key().c_str(), k) == 0) known = true;
-        if (!known) { Serial.printf("[JSON CHECK] Unexpected root field: %s\n", kv.key().c_str()); ok = false; }
-    }
-
-    // Root field types and fixed values
-    if (!d["timestamp"].isNull() && !d["timestamp"].is<const char*>()) { Serial.println("[JSON CHECK] timestamp: invalid type"); ok = false; }
-    if (d["timestamp"].isNull()) Serial.println("[JSON CHECK] timestamp unavailable (time not synchronized)");
-    if (strcmp(d["device_id"] | "", DEVICE_ID) != 0)   { Serial.println("[JSON CHECK] device_id mismatch");  ok = false; }
-    if (strcmp(d["group_code"] | "", GROUP_CODE) != 0) { Serial.println("[JSON CHECK] group_code mismatch"); ok = false; }
-    if (strcmp(d["zone"] | "", ZONE) != 0)             { Serial.println("[JSON CHECK] zone mismatch");       ok = false; }
-    if (strcmp(d["protocol"] | "", PROTOCOL) != 0)     { Serial.println("[JSON CHECK] protocol mismatch");   ok = false; }
-
-    if (!d["metrics"].is<JsonObject>()) {
-        Serial.println("[JSON CHECK] metrics missing or not an object");
-        return false;
-    }
-
-    // Expected type: 'n' number, 'b' boolean, 'i' integer, 's' string
-    struct Rule { const char *key; char type; };
-    const Rule rules[] = {
-        {"gas_ppm", 'n'}, {"smoke_detected", 'b'}, {"temperature_c", 'n'}, {"humidity_pct", 'n'},
-        {"water_leak_detected", 'b'}, {"motion_detected", 'b'},
-        {"servo_current_angle_deg", 'i'}, {"servo_target_angle_deg", 'i'}, {"servo_operation_status", 's'}
-    };
-
-    JsonObject m = d["metrics"].as<JsonObject>();
-
-    // Unexpected metrics fields
-    for (JsonPair kv : m) {
-        bool known = false;
-        for (const Rule &r : rules) if (strcmp(kv.key().c_str(), r.key) == 0) known = true;
-        if (!known) { Serial.printf("[JSON CHECK] Unexpected metrics field: %s\n", kv.key().c_str()); ok = false; }
-    }
-
-    // Presence and type of each expected field
-    for (const Rule &r : rules) {
-        JsonVariant v = m[r.key];
-        if (v.isNull()) {
-            Serial.printf("[JSON CHECK] %s: %s (unavailable)\n",
-                          r.key, v.is<JsonVariant>() ? "null" : "absent");
-            continue;
-        }
-        bool typeOk = (r.type == 'n' && v.is<float>()) ||
-                      (r.type == 'b' && v.is<bool>()) ||
-                      (r.type == 'i' && v.is<int>()) ||
-                      (r.type == 's' && v.is<const char*>());
-        if (!typeOk) { Serial.printf("[JSON CHECK] %s: invalid type\n", r.key); ok = false; }
-    }
-
-    return ok;
-}
-
-// One JSON cycle: build -> self-check -> display -> publish
-void jsonCycle() {
-    static char jsonBuf[JSON_BUF_SIZE];
-
-    size_t len = buildTelemetryJSON(jsonBuf, sizeof(jsonBuf));
-    if (len == 0) {
-        Serial.println("[JSON] Build failed (overflow or buffer too small).");
-        return;
-    }
-
-    motionLatched = false;   // motion seen so far is now included in this message
-    bool localOk = validateJsonMessage(jsonBuf);
-
-        Serial.println("[JSON] Generated message:");
-    Serial.println(jsonBuf);
-    Serial.printf("[JSON] Local self-check: %s\n", localOk ? "OK" : "FAILED");
-
-    if (!localOk) {
-        Serial.println("[PUBLISH] Skipped: local self-check failed.");
-        return;
-    }
-    publishTelemetry(jsonBuf, len);
-}
-
-// Connectivity summary (no secrets printed)
-void displayStatus() {
-    Serial.println("========================================");
-    Serial.println("[EnviroMesh Connectivity Status]");
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("- Wi-Fi  : Connected, IP %s, RSSI %d dBm\n",
-                      WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    } else {
-        Serial.println("- Wi-Fi  : Disconnected (retrying)");
-    }
-
-    char ts[25];
-    if (getUtcTimestamp(ts, sizeof(ts))) {
-        Serial.printf("- Clock  : Synchronized, UTC %s\n", ts);
-    } else {
-        Serial.println("- Clock  : NOT synchronized (timestamp omitted)");
-    }
-    if (!mqttConfigValid()) {
-        Serial.println("- MQTT   : Not configured (placeholders in secrets.h)");
-    } else {
-        Serial.printf("- MQTT   : %s (published: %lu, failed: %lu)\n",
-                      mqtt.connected() ? "Connected" : "Disconnected (retrying)",
-                      publishCount, publishFailCount);
-    }
-    Serial.println("========================================");
 }
