@@ -57,34 +57,67 @@ IRQ_PAYLOAD_CRC_ERROR = 0x20
 # ==================================================
 
 # Hardware SPI + GPIO — only available on real Raspberry Pi hardware.
-# These are imported lazily inside the functions that need them so the
-# module can be safely imported on any platform (e.g. x86 Docker on dev Mac).
+# Drivers are loaded lazily so the backend can run in any Python virtualenv
+# or host environment (Mac, PC, Docker) without import crashes.
 _spidev_available = False
+_spidev_error: str = ""
+_spidev_mod = None
+GPIO = None
+
 try:
     import spidev as _spidev_mod
-    import RPi.GPIO as GPIO  # noqa: F401
     _spidev_available = True
-except ModuleNotFoundError:
-    logger = logging.getLogger("lora_receiver")  # ensure logger exists early
-    logger.warning(
-        "spidev / RPi.GPIO not available — LoRa hardware receiver disabled. "
-        "Running in software-only mode."
-    )
+except Exception as _hw_exc:
+    _spidev_error = str(_hw_exc)
+
+try:
+    import RPi.GPIO as GPIO
+except (ImportError, RuntimeError):
+    try:
+        import rpi_lgpio as GPIO  # drop-in replacement on RPi 5 / Debian Bookworm
+    except (ImportError, RuntimeError):
+        GPIO = None
 
 spi = None
-if _spidev_available:
-    spi = _spidev_mod.SpiDev()
-    spi.open(0, 0)
-    spi.max_speed_hz = 100_000
-    spi.mode = 0
+
+
+def get_spi():
+    """Lazily open SPI device (/dev/spidev0.0) with robust error handling."""
+    global spi, _spidev_available, _spidev_error
+    if not _spidev_available or _spidev_mod is None:
+        return None
+    if spi is not None:
+        return spi
+    try:
+        s = _spidev_mod.SpiDev()
+        s.open(0, 0)
+        s.max_speed_hz = 100_000
+        s.mode = 0
+        spi = s
+        return spi
+    except Exception as exc:
+        _spidev_available = False
+        _spidev_error = f"Cannot open /dev/spidev0.0: {exc}"
+        logging.getLogger("lora_receiver").warning(
+            "LoRa SPI could not be opened: %s (ensure SPI is enabled via raspi-config)",
+            exc,
+        )
+        spi = None
+        return None
 
 
 def read_register(reg):
-    return spi.xfer2([reg & 0x7F, 0x00])[1]
+    s = get_spi()
+    if s is None:
+        raise RuntimeError("SPI interface is not open")
+    return s.xfer2([reg & 0x7F, 0x00])[1]
 
 
 def write_register(reg, value):
-    spi.xfer2([reg | 0x80, value & 0xFF])
+    s = get_spi()
+    if s is None:
+        raise RuntimeError("SPI interface is not open")
+    s.xfer2([reg | 0x80, value & 0xFF])
 
 
 # ==================================================
@@ -92,16 +125,26 @@ def write_register(reg, value):
 # ==================================================
 
 def reset_module():
-    import RPi.GPIO as GPIO
-    GPIO.setwarnings(False)
-    GPIO.setup(RESET_PIN, GPIO.OUT)
+    if GPIO is None:
+        logging.getLogger("lora_receiver").debug(
+            "RPi.GPIO not available — skipping hardware reset pulse"
+        )
+        return
+    try:
+        GPIO.setmode(GPIO.BCM)   # use BCM pin numbering (RESET_PIN = GPIO25)
+        GPIO.setwarnings(False)
+        GPIO.setup(RESET_PIN, GPIO.OUT)
 
-    GPIO.output(RESET_PIN, GPIO.HIGH)
-    time.sleep(0.02)
-    GPIO.output(RESET_PIN, GPIO.LOW)
-    time.sleep(0.02)
-    GPIO.output(RESET_PIN, GPIO.HIGH)
-    time.sleep(0.1)
+        GPIO.output(RESET_PIN, GPIO.HIGH)
+        time.sleep(0.02)
+        GPIO.output(RESET_PIN, GPIO.LOW)
+        time.sleep(0.02)
+        GPIO.output(RESET_PIN, GPIO.HIGH)
+        time.sleep(0.1)
+    except Exception as exc:
+        logging.getLogger("lora_receiver").warning(
+            "Could not toggle LoRa RESET pin via GPIO: %s", exc
+        )
 
 
 # ==================================================
@@ -192,10 +235,14 @@ def process_packet(raw_payload: str):
 
     # Persist the raw packet for diagnostics / traceability.
     device_id = telemetry.get("device_id") if isinstance(telemetry, dict) else None
-    write_raw_packet(device_id or "unknown", "LoRa", raw_payload.encode("utf-8"), parsed)
+    write_raw_packet(device_id, "LoRa", raw_payload.encode("utf-8"), parsed)
 
     if not parsed:
         return
+
+    # Normalize "status" to "metadata" if present
+    if isinstance(telemetry, dict) and "status" in telemetry and "metadata" not in telemetry:
+        telemetry["metadata"] = telemetry.pop("status")
 
     # 1. Validate via backend validator.
     if not validate(telemetry):
@@ -222,15 +269,26 @@ def run():
     function logs a warning and returns immediately so the rest of the
     backend (FastAPI + MQTT) continues to work.
     """
-    if not _spidev_available:
+    if not _spidev_available or get_spi() is None:
         logging.getLogger("lora_receiver").warning(
-            "LoRa hardware not available on this platform — receiver thread exiting."
+            "LoRa hardware not available on this platform (%s) — receiver thread exiting.",
+            _spidev_error or "SPI device not open",
         )
         return
 
-    logging.basicConfig(level=logging.INFO)
+    try:
+        from .colored_logger import setup_colored_logging
+        setup_colored_logging(name="lora_receiver")
+    except ImportError:
+        logging.basicConfig(level=logging.INFO)
     logger.info("Initialisation du récepteur LoRa...")
-    init_lora()
+    try:
+        init_lora()
+    except Exception as exc:
+        logger.error(
+            "Erreur lors de l'initialisation LoRa (%s). Le récepteur LoRa s'arrête.", exc
+        )
+        return
 
     logger.info("En attente des paquets ESP32...")
 

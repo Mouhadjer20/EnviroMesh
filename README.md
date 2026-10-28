@@ -48,9 +48,9 @@ The network is divided into field sensor nodes, edge gateways, core servers, and
 | **ESP32 Node 1 (G11)**          | [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino)             | MQ-2 (LPG model + NVS $R_0$), DHT11, Water sensor    | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
 | **ESP32 Node 2 (G41)**          | [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino)   | MQ-2, DHT11, Water sensor                            | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
 | **ESP32 Node 3 (G31)**          | [`firmware/nodes/node_g31/src/main.ini`](firmware/nodes/node_g31/src/main.ini)             | BMP280, MQ-2, Water sensor                           | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Phase 3.1 Stub       |
-| **ESP32 Servo Node (G61)**      | [`firmware/nodes/node_g61_servo/src/main.ini`](firmware/nodes/node_g61_servo/src/main.ini) | MQ-2, DHT11, Water, PIR, 9g Micro Servo              | Wi-Fi MQTT + BLE      | EMQX + Local Operator  | Phase 3.2 Stub       |
+| **ESP32 Servo Node (G61)**      | [`firmware/nodes/node_g61_servo/src/main.ino`](firmware/nodes/node_g61_servo/src/main.ino) | MQ-2, DHT11, Water, PIR, 9g Micro Servo              | Wi-Fi MQTT            | EMQX Broker (`:1883`)  | **Operational**      |
 | **Test Node G42**               | [`firmware/nodes/node_g42/src/main/main.ino`](firmware/nodes/node_g42/src/main/main.ino)   | Wi-Fi Station + PubSubClient                         | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
-| **Test Node G43**               | [`firmware/nodes/node_g43/src/main/main.ino`](firmware/nodes/node_g43/src/main/main.ino)   | Schema-Compliant Telemetry Publisher                 | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
+| **Test Node G43**               | [`firmware/nodes/node_g43/src/main.ino`](firmware/nodes/node_g43/src/main.ino)             | Schema-Compliant Telemetry Publisher                 | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
 | **Raspberry Pi Gateway & Core** | [`raspberry_pi/`](raspberry_pi/)                                                           | SX1278 SPI, EMQX Broker, TimescaleDB, FastAPI, Nginx | HTTPS, WSS, MQTT, SPI | User Dashboard & Admin | **Core Operational** |
 
 ---
@@ -214,7 +214,8 @@ The system uses a **polymorphic JSON payload**: every message shares the same to
 
 ### 5.1. Standard Payload Contract
 
-All telemetry-producing nodes should follow this structure:
+#### Canonical Ingestion Schema (Full Format)
+All telemetry-producing nodes transmitting over Wi-Fi MQTT, or the normalized representation in the ingestion pipeline, follow this structure:
 
 ```json
 {
@@ -229,7 +230,7 @@ All telemetry-producing nodes should follow this structure:
     "temperature_c": 23.8,
     "humidity_pct": 55.2
   },
-  "status": { // Optional (Sa9sit gpt aya madli had les informations)
+  "status": {
     "battery_voltage": 3.72,
     "rssi_dbm": -85,
     "snr_db": 7.2
@@ -237,19 +238,32 @@ All telemetry-producing nodes should follow this structure:
 }
 ```
 
-**Standardization rules:**
+#### Over-the-Air Compact LoRa Schema (< 250 Bytes)
+Due to the **SX1278 hardware FIFO limit (256 bytes)**, field LoRa nodes (`G11`, `G41`) transmit a memory-safe, compacted JSON payload strictly bounded under 250 bytes:
 
-- `timestamp`: UTC measurement time in ISO 8601 format. The ingestion service converts it to PostgreSQL `TIMESTAMPTZ`.
-- `device_id`: physical device identifier referencing `devices.device_id`.
-- `group_code`: group identifier referencing `groups.group_code`, such as `G1`, `G3`, `G4`, or `G6`.
-- `zone`: deployment zone recorded in the device registry.
-- `protocol`: actual transport, such as `lora` or `wifi_mqtt`.
-- `metrics`: sensor measurements and detection states.
-- `status`: optional device-health and communication diagnostics.
+```json
+{
+  "device_id": "G41",
+  "zone": "Sector_B_Warehouse",
+  "protocol": "lora",
+  "metrics": {
+    "gas_adc_raw": 0,
+    "smoke_detected": true,
+    "temperature_c": 23.6,
+    "humidity_pct": 43.7,
+    "water_leak_detected": false
+  },
+  "metadata": {
+    "uptime_ms": 568,
+    "packet_counter": 1
+  }
+}
+```
 
-The server should validate the device ID, group assignment, allowed metric names, value types, timestamp, and payload size before storing the message.
-
-The database registry remains authoritative for device ownership and location. Device-reported metadata should not override trusted registry values.
+**Optimization & Ingestion Rules:**
+- **Over-the-Air Airtime Optimization:** Redundant static fields (`timestamp`, `group_code`) are omitted over RF to conserve battery, reduce airtime, and stay well under 250 bytes.
+- **Gateway Rehydration:** Upon reception in `services/lora_receiver.py`, the Raspberry Pi gateway automatically assigns `timestamp` (UTC), resolves `group_code` from `device_id`, and stores raw bytes to `raw_sensor_packets` before normalizing to `sensor_telemetry`.
+- **Key Normalization:** Legacy `"status"` blocks are mapped to `"metadata"`, and sensor readings with numeric values are rounded before transmission to prevent dangling-pointer memory corruption.
 
 ---
 
@@ -347,10 +361,11 @@ clean separation between API routes, business services, and infrastructure.
 
 ```
 raspberry_pi/backend/
-├── main.py                       # Entry point: FastAPI app + MQTT subscriber loop
-├── requirements.txt              # Python runtime dependencies
-├── Dockerfile                    # Container image (python:3.11-slim)
-├── README.md                     # README file
+├── main.py                       # Entry point: FastAPI app + MQTT subscriber loop + LoRa thread
+├── requirements.txt              # Core production dependencies (psycopg2-binary, fastapi, paho-mqtt)
+├── requirements-hardware.txt     # Raspberry Pi hardware drivers (spidev, RPi.GPIO)
+├── Dockerfile                    # Container image with hardware device passthrough
+├── README.md                     # Backend architecture documentation
 ├── routes/                       # FastAPI route modules (absolute imports)
 │   ├── __init__.py
 │   ├── devices.py                # GET/POST/PUT/DELETE /devices
@@ -358,15 +373,16 @@ raspberry_pi/backend/
 │   ├── alerts.py                 # GET/POST /alerts, PATCH /alerts/{id}/ack
 │   └── users.py                  # User management endpoints
 │
-├── auth/                         # Authentication routes
-│   └── README.md                 # README file
+├── auth/                         # Authentication & RBAC specifications
+│   └── README.md                 # JWT & bcrypt architecture documentation
 │
-└── services/                     # Business logic services
+└── services/                     # Core ingestion, validation & persistence
     ├── __init__.py
+    ├── colored_logger.py         # High-visibility ANSI colored logging
     ├── mqtt_subscriber.py        # Paho-MQTT client; subscribes, validates, persists
-    ├── database_writer.py        # TimescaleDB/PostgreSQL writer (psycopg2)
-    ├── lora_receiver.py          # LoraWAN receiver (sx1278 driver)
-    └── telemetry_validator.py    # Validates telemetry metrics & ranges
+    ├── database_writer.py        # TimescaleDB hypertable writer with VARCHAR(3) safety
+    ├── lora_receiver.py          # SX1278 SPI driver with graceful software fallback
+    └── telemetry_validator.py    # Validates telemetry metrics & physical boundaries
 ```
 
 #### 5.6.2. Running the Backend
@@ -447,11 +463,11 @@ To streamline testing, deployment, and validation without needing manual complex
 | Script                                                   | Purpose                                                                                      | Example Usage                                                 |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | [`setup_env.sh`](scripts/setup_env.sh)                   | Sets up `.env`, directory structure, permissions, and Python virtual environment             | `./scripts/setup_env.sh`                                      |
-| [`docker_control.sh`](scripts/docker_control.sh)         | Controls the entire container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) | `./scripts/docker_control.sh start`                           |
+| [`docker_control.sh`](scripts/docker_control.sh)         | Controls container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) with health polling | `./scripts/docker_control.sh start`                           |
 | [`db_manage.sh`](scripts/db_manage.sh)                   | Manages PostgreSQL & TimescaleDB migrations, seeds, verification, and `psql` shell           | `./scripts/db_manage.sh init`                                 |
 | [`simulate_telemetry.py`](scripts/simulate_telemetry.py) | Generates and publishes synthetic sensor readings over MQTT with anomaly injection           | `./scripts/simulate_telemetry.py --device G11 --interval 2.0` |
 | [`mqtt_monitor.py`](scripts/mqtt_monitor.py)             | Real-time terminal telemetry monitor subscribing to `enviromesh/#`                           | `./scripts/mqtt_monitor.py`                                   |
-| [`check_health.py`](scripts/check_health.py)             | Diagnostic tool testing Nginx, FastAPI backend, EMQX broker, and TimescaleDB                 | `./scripts/check_health.py`                                   |
+| [`check_health.py`](scripts/check_health.py)             | ANSI-colored diagnostic tool displaying LAN IP and testing Nginx, API, EMQX, and TimescaleDB | `./scripts/check_health.py`                                   |
 | [`lora_packet_inject.py`](scripts/lora_packet_inject.py) | Tests the LoRa packet processing pipeline without physical SX1278 hardware                   | `./scripts/lora_packet_inject.py --device G11`                |
 
 Full documentation for each script is available in [`scripts/README.md`](scripts/README.md).
@@ -468,18 +484,19 @@ Full documentation for each script is available in [`scripts/README.md`](scripts
 
 ### Phase 2: Edge Gateway & Ingestion Services (RPi) — [COMPLETED]
 - [x] Paho-MQTT subscriber daemon subscribing to `enviromesh/devices/+/telemetry` (`services/mqtt_subscriber.py`).
-- [x] Hardware SPI LoRa frame receiver for SX1278 (`services/lora_receiver.py`).
-- [x] Telemetry schema validation and range boundary checks (`services/telemetry_validator.py`).
-- [x] Multi-threaded concurrent ingestion loop in `main.py`.
+- [x] Hardware SPI LoRa frame receiver for SX1278 (`services/lora_receiver.py`) with software fallback for non-RPi hosts.
+- [x] Docker container hardware device passthrough (`privileged: true`, `/dev:/dev` volume mapping) enabling native LoRa SPI inside container.
+- [x] Telemetry schema validation, compact payload mapping, and range boundary checks (`services/telemetry_validator.py`).
+- [x] Multi-threaded concurrent ingestion loop in `main.py` with ANSI colored logging (`services/colored_logger.py`).
 - [x] Reverse proxy configuration routing `/` to dashboard and `/api/` to backend (`infrastructure/nginx/default.conf`).
 
 ### Phase 3: Field Firmware Development (ESP32 Nodes) — [PARTIAL / IN PROGRESS]
 - [x] **Node G11 (Group 1 LoRa):** Implemented in [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino) with MQ-2 LPG regression, clean-air NVS calibration, DHT11, and Ra-02 LoRa transceiver.
-- [x] **Node G41 (Group 4 LoRa):** Implemented in [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) with MQ-2, DHT11, and Water sensor.
+- [x] **Node G41 (Group 4 LoRa):** Implemented in [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) with MQ-2, DHT11, Water sensor, and compact LoRa payload format (<250B).
+- [x] **Node G61 (Group 6 Servo & Sensors):** Implemented in [`firmware/nodes/node_g61_servo/src/main.ino`](firmware/nodes/node_g61_servo/src/main.ino) with MQ-2, DHT11, Water, PIR motion, and SG90 Micro Servo PWM control.
 - [x] **Test Nodes G42 & G43 (Wi-Fi MQTT):** Implemented in [`firmware/nodes/node_g42/`](firmware/nodes/node_g42/) and [`firmware/nodes/node_g43/`](firmware/nodes/node_g43/).
 - [x] **ESP-NOW to LoRa Dual-Radio Bridge:** Prototyped in [`my_files/esp_now_LoRa/`](my_files/esp_now_LoRa/) and [`my_files/sensor_esp_now/`](my_files/sensor_esp_now/).
 - [ ] **Node G31 (Group 3 Wi-Fi):** Finalize BMP280 barometric pressure and MQ-2 acquisition over Wi-Fi MQTT.
-- [ ] **Node G61 (Group 6 Servo):** Finalize Micro Servo 9g PWM control, PIR motion interrupt, and BLE GATT server for local actuation.
 
 ### Phase 4: API Routes, Security Layer & Web Dashboard — [IN PROGRESS / UPCOMING]
 - [ ] Connect FastAPI routes to database:

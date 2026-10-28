@@ -50,8 +50,11 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("backend")
+from services.colored_logger import setup_colored_logging
+
+# Configure colored logging across all backend loggers
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logger = setup_colored_logging(level=log_level, name="backend")
 
 
 import uvicorn

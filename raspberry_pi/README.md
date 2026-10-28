@@ -88,8 +88,9 @@ The Raspberry Pi (RPi 3 / 4 / 5) serves as the central hub of the **EnviroMesh**
 raspberry_pi/
 ├── backend/                          # FastAPI REST API & Ingestion Engine
 │   ├── main.py                       # Application entry point: FastAPI + MQTT + LoRa threads
-│   ├── requirements.txt              # Python runtime dependencies
-│   ├── Dockerfile                    # Container image (python:3.11-slim)
+│   ├── requirements.txt              # Core Python runtime dependencies (psycopg2-binary, fastapi)
+│   ├── requirements-hardware.txt     # Raspberry Pi hardware drivers (spidev, RPi.GPIO)
+│   ├── Dockerfile                    # Container image with SPI/GPIO passthrough
 │   ├── routes/                       # Modular API router endpoints
 │   │   ├── __init__.py
 │   │   ├── devices.py                # Device registration & inventory CRUD
@@ -98,6 +99,7 @@ raspberry_pi/
 │   │   └── users.py                  # User accounts & RBAC management
 │   ├── services/                     # Ingestion, validation & persistence services
 │   │   ├── __init__.py
+│   │   ├── colored_logger.py         # High-visibility ANSI colored logger
 │   │   ├── mqtt_subscriber.py        # Paho-MQTT client for EMQX telemetry
 │   │   ├── lora_receiver.py          # SX1278 hardware SPI driver & frame receiver
 │   │   ├── telemetry_validator.py    # Payload schema & metric boundary validator
@@ -148,20 +150,20 @@ ls -l /dev/spidev0.*
 
 ## 4. Running the Platform
 
-You can run the EnviroMesh stack using our automated scripts or standard Docker Compose:
+You can run the EnviroMesh stack using our automated scripts or standard Docker Compose. The backend container runs with `privileged: true` and mounts `/dev:/dev`, allowing the LoRa hardware SPI receiver to function seamlessly directly inside Docker.
 
 ### Option A: Using Helper Scripts (Recommended)
 ```bash
 # 1. Initialize environment, permissions, and dependencies
 ./scripts/setup_env.sh
 
-# 2. Launch the entire containerized stack
+# 2. Launch the entire containerized stack (includes health check wait)
 ./scripts/docker_control.sh start
 
 # 3. Apply database migrations and seeds
 ./scripts/db_manage.sh init
 
-# 4. Verify stack health
+# 4. Verify stack health (outputs colored status and local LAN IP)
 ./scripts/check_health.py
 
 # 5. Monitor incoming telemetry in real-time
@@ -171,7 +173,7 @@ You can run the EnviroMesh stack using our automated scripts or standard Docker 
 ### Option B: Native Docker Compose
 ```bash
 cp .env.example .env
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 ```
 
