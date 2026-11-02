@@ -25,10 +25,11 @@ logger = logging.getLogger("mqtt_subscriber")
 
 load_dotenv()
 
-BROKER_HOST = os.getenv("EMQX_URL", os.getenv("MQTT_HOST", "localhost"))
+BROKER_HOST = os.getenv("MQTT_HOST", os.getenv("EMQX_URL", "localhost"))
 BROKER_PORT = int(os.getenv("MQTT_PORT", 1883))
-TOPIC_PREFIX = os.getenv("TOPIC_PRIFIX", os.getenv("TOPIC_PREFIX", "enviromesh"))
-TOPIC = f"{TOPIC_PREFIX}" #/devices/G11/telemetry
+# Note: TOPIC_PRIFIX was a legacy typo kept for backward compatibility; prefer MQTT_TOPIC or TOPIC_PREFIX
+TOPIC_PREFIX = os.getenv("MQTT_TOPIC", os.getenv("TOPIC_PREFIX", os.getenv("TOPIC_PRIFIX", "enviromesh/devices/+/telemetry")))
+TOPIC = TOPIC_PREFIX
 
 
 class MqttSubscriber:
