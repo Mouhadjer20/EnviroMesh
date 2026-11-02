@@ -67,7 +67,8 @@ def main():
 
     mqtt_host = os.getenv("MQTT_HOST", os.getenv("EMQX_URL", "localhost"))
     mqtt_port = int(os.getenv("MQTT_PORT", 1883))
-    mqtt_topic = os.getenv("MQTT_TOPIC", os.getenv("TOPIC_PRIFIX", "enviromesh/devices/+/telemetry"))
+    # MQTT_TOPIC takes priority; TOPIC_PREFIX / legacy TOPIC_PRIFIX typo kept for compatibility
+    mqtt_topic = os.getenv("MQTT_TOPIC", os.getenv("TOPIC_PREFIX", os.getenv("TOPIC_PRIFIX", "enviromesh/devices/+/telemetry")))
 
     logger.info("MQTT subscriber connecting to %s:%d with topic %s", mqtt_host, mqtt_port, mqtt_topic)
 
