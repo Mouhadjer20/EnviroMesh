@@ -25,8 +25,7 @@ from services.lora_receiver import run as lora_run
 
 from fastapi import FastAPI
 
-from routes import devices, telemetry, alerts, users
-
+from routes import devices, telemetry, alerts, users, groups
 from dotenv import load_dotenv
 
 logger = logging.getLogger("main")
@@ -41,6 +40,7 @@ app = FastAPI(
 
 app.include_router(devices.router)
 app.include_router(telemetry.router)
+app.include_router(groups.router)
 #app.include_router(alerts.router) # Not included
 #app.include_router(users.router) # Next phase
 

@@ -1,126 +1,18 @@
-# Dashboard — EnviroMesh Web Frontend
-
-The dashboard is the user-facing web interface for the **EnviroMesh** environmental monitoring platform. It provides real-time visualization of environmental telemetry, device status summaries, emergency alerts, and actuator controls, filtered by **Role-Based Access Control (RBAC)**.
-
----
-
-## Table of Contents
-
-- [1. Role in the Architecture](#1-role-in-the-architecture)
-- [2. Directory Layout & Current Implementation](#2-directory-layout--current-implementation)
-  - [Current Status (`index.html`)](#current-status-indexhtml)
-- [3. Implementation Roadmap (Phase 4: Dashboard & UI)](#3-implementation-roadmap-phase-4-dashboard--ui)
-  - [1. Authentication & Session Management](#1-authentication--session-management)
-  - [2. Live Telemetry & Dynamic Charts](#2-live-telemetry--dynamic-charts)
-  - [3. Actuator Control & Remote Triggering](#3-actuator-control--remote-triggering)
-  - [4. Video Subsystem Integration (Phase 5)](#4-video-subsystem-integration-phase-5)
-- [4. Building & Running](#4-building--running)
-  - [Running in Docker](#running-in-docker)
-  - [Local Frontend Development](#local-frontend-development)
-- [5. Related Documentation](#5-related-documentation)
-
----
-
-## 1. Role in the Architecture
-
-The dashboard is served by Nginx and exposed through the central **EnviroMesh Gateway Reverse Proxy** on port **`8080`**:
+# Dashboard EnviroMesh (React + Vite)
 
 ```
-Browser Client (Technician / Admin)
-        │
-        │ HTTP / HTTPS (Port 8080)
-        v
-+-------------------------------------------------------+
-|                 Nginx Reverse Proxy                   |
-|               (enviromesh-nginx:8080)                 |
-+---------------------------+---------------------------+
-                            |
-           +----------------+----------------+
-           | /                               | /api/
-           v                                 v
-+-----------------------+         +---------------------+
-|  Dashboard Frontend   |         |   FastAPI Backend   |
-| (enviromesh-dashboard)|         | (enviromesh-backend)|
-|  Port 80 (Internal)   |         | Port 8000 (Internal)|
-+-----------------------+         +---------------------+
+npm install        # une fois (génère package-lock.json, requis par le Dockerfile)
+npm run dev        # http://localhost:5173, /api est transmis à VITE_API_PROXY
+docker compose up --build -d dashboard nginx   # version servie par nginx
 ```
 
-- Requests to `http://localhost:8080/` load the web dashboard static assets.
-- Requests to `http://localhost:8080/api/` are transparently routed to the FastAPI backend.
+- `src/pages/` : Overview (vue d'ensemble), Device (détail d'un nœud), Alerts
+- `src/components/` : Chart, Stat
+- `src/hooks/useApi.js` : lecture périodique de l'API
+- `src/context/DataContext.jsx` : nœuds, groupes et dernières mesures partagés
+- `src/lib.js` : métriques, seuils d'alerte, formats, exports
+- La vue d’ensemble utilise les API réelles des nœuds et de télémétrie pour ses indicateurs, mesures, graphiques et événements récents.
+- La navigation indique « À venir » pour les modules dont l’API/backend n’est pas opérationnel ; aucune donnée fictive n’est présentée comme réelle.
+- L’affichage du MQ-2 en ppm dépend de son étalonnage et les seuils d’alerte restent provisoires. La gestion des utilisateurs et les commandes d’actionneurs restent désactivées sans autorisation côté serveur.
 
----
-
-## 2. Directory Layout & Current Implementation
-
-```
-raspberry_pi/dashboard/
-├── Dockerfile           # Nginx alpine image serving static assets from /usr/share/nginx/html
-├── index.html           # Current single-page status interface (Phase 1–2 placeholder)
-└── README.md            # This documentation file
-```
-
-### Current Status (`index.html`)
-The current `index.html` provides:
-- Clean, responsive CSS layout.
-- High-level metric cards (**Devices Online**, **Gas PPM**, **Temperature °C**, **Humidity %**).
-- Quick architectural links to API, MQTT, TimescaleDB, and EMQX.
-- Direct alignment with the Docker Compose setup.
-
----
-
-## 3. Implementation Roadmap (Phase 4: Dashboard & UI)
-
-The full dashboard experience is scheduled for **Phase 4: Dashboard & Security Layer**:
-
-### 1. Authentication & Session Management
-- [ ] **Login Screen:** Email and password login form.
-- [ ] **JWT Storage:** Securely store access tokens and decode user claims:
-  - Technician role (`zone_technician`): automatically restrict views to assigned zone (e.g. *Sector A Warehouse*).
-  - Admin role (`admin`): full global visibility across all sectors and devices (`G11`, `G41`, `G31`, `G61`).
-
-### 2. Live Telemetry & Dynamic Charts
-- [ ] **Real-Time Data Feed:** Connect to the backend via WebSocket (`/ws/telemetry`) or poll `/api/telemetry/{id}/latest` every 2 seconds.
-- [ ] **Interactive Visualizations:** Integrate Chart.js or Apache ECharts for:
-  - Multi-line temperature & relative humidity history.
-  - Gas concentration (LPG-equivalent ppm) with threshold danger zone highlight (> 2000 ppm).
-  - Barometric pressure trendline (Node G31 BMP280).
-  - Water leak detection indicator with audio/visual strobe alert.
-
-### 3. Actuator Control & Remote Triggering
-- [ ] **Node G61 Servo Actuation Panel:**
-  - Slider or preset buttons for valve opening angle ($0^\circ$ closed, $90^\circ$ half, $180^\circ$ open).
-  - Feedback status indicator displaying `servo_current_angle_deg`.
-  - Manual override toggle requiring confirmation.
-
-### 4. Video Subsystem Integration (Phase 5)
-- [ ] Embedded HLS / WebRTC video player consuming low-latency streams from the MediaMTX video proxy (when ESP32-CAM nodes are deployed).
-
----
-
-## 4. Building & Running
-
-### Running in Docker
-The dashboard starts automatically when launching the EnviroMesh stack:
-```bash
-./scripts/docker_control.sh start
-```
-Access the dashboard in your browser: **`http://localhost:8080`**.
-
-### Local Frontend Development
-When building a custom React / Vue / Vite application:
-1. Initialize the project inside `raspberry_pi/dashboard/`.
-2. Configure build output to `dist/` or `build/`.
-3. Update `raspberry_pi/dashboard/Dockerfile` to copy compiled assets into `/usr/share/nginx/html`.
-4. Rebuild the container:
-   ```bash
-   ./scripts/docker_control.sh build
-   ```
-
----
-
-## 5. Related Documentation
-
-- Project Root Architecture: [README.md](../../README.md)
-- Raspberry Pi Core Server: [raspberry_pi/README.md](../README.md)
-- Backend API Specification: [backend/README.md](../backend/README.md)
-- Automation Scripts: [scripts/README.md](../../scripts/README.md)
+Routage par `#` (HashRouter) : aucune configuration nginx supplémentaire.

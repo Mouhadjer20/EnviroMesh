@@ -40,6 +40,10 @@ class MqttSubscriber:
         self.topic = topic or TOPIC
         self._running = False
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "gateway-subscriber")
+        username = os.getenv("MQTT_USERNAME")
+        password = os.getenv("MQTT_PASSWORD")
+        if username:
+            self.client.username_pw_set(username, password or None)
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
