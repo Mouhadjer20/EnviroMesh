@@ -11,6 +11,8 @@ logger = logging.getLogger("telemetry_validator")
 # Expected metric keys and their valid ranges
 METRIC_RANGES = {
     "gas_ppm": (0, 10000),
+    "gas_adc_raw": (0, 4095),
+    "water_adc_raw": (0, 4095),
     "temperature_c": (-40, 85),
     "humidity": (0, 100),
     "humidity_pct": (0, 100),
