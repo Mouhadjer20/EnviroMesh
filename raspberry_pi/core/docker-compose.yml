@@ -1,0 +1,163 @@
+## EnviroMesh Core — Docker Compose (RPi 2)
+##
+## Services:
+##   emqx-core      — Central EMQX broker (TLS on 8883, receives from RPi 1)
+##   timescaledb    — PostgreSQL + TimescaleDB (internal only — no host port)
+##   backend        — FastAPI + MQTT subscriber + database writer
+##   dashboard      — React + Vite (served by built-in nginx)
+##   nginx          — Reverse proxy: routes /api → backend, / → dashboard
+##
+## Usage:
+##   cp .env.example .env && nano .env
+##   docker compose up -d
+##   docker compose exec timescaledb psql -U $POSTGRES_USER -d $POSTGRES_DB \
+##       -f /migrations/001_create_registry.sql \
+##       -f /migrations/001_create_telemetry.sql \
+##       -f /migrations/003_add_gateway_metadata.sql
+
+name: enviromesh-core
+
+services:
+
+  # --------------------------------------------------------------------------
+  # Central EMQX broker — receives forwarded telemetry from RPi 1 over TLS
+  # --------------------------------------------------------------------------
+  emqx-core:
+    image: emqx/emqx:5.8.8 # multi-arch: linux/amd64, linux/arm64, linux/arm/v7
+    container_name: enviromesh-emqx-core
+    hostname: emqx-core
+    restart: unless-stopped
+    environment:
+      EMQX_NODE_NAME: "emqx@127.0.0.1"
+      EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_DASHBOARD_USERNAME}"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_DASHBOARD_PASSWORD}"
+      EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE}"
+    ports:
+      # MQTT over TLS — reachable by RPi 1 gateway
+      - "0.0.0.0:8883:8883"
+      # Plain MQTT — internal only (backend subscriber on Docker network)
+      - "127.0.0.1:1883:1883"
+      # EMQX dashboard — localhost only
+      - "127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083"
+    volumes:
+      - emqx_core_data:/opt/emqx/data
+      - emqx_core_log:/opt/emqx/log
+      - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./emqx/certs:/opt/emqx/etc/certs:ro
+    healthcheck:
+      test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+    networks:
+      - core-net
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL with TimescaleDB
+  # NOT exposed to the host — backend accesses it via the Docker network.
+  # --------------------------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16-oss
+    container_name: enviromesh-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      TZ: UTC
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./database/migrations:/migrations:ro
+    # NOTE: no 'ports' entry — database is NOT accessible from the host or LAN.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - core-net
+
+  # --------------------------------------------------------------------------
+  # FastAPI backend — REST API, MQTT subscriber, database writer
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: enviromesh-backend
+    restart: unless-stopped
+    depends_on:
+      emqx-core:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+
+      # Subscribe to gateway-forwarded telemetry (not raw device topics)
+      MQTT_HOST: "emqx-core"
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: "${MQTT_APP_USERNAME}"
+      MQTT_PASSWORD: "${MQTT_APP_PASSWORD}"
+      MQTT_TOPIC: "enviromesh/gateway/+/telemetry"
+
+      DB_HOST: "timescaledb"
+      DB_PORT: "5432"
+      DB_NAME: "${POSTGRES_DB}"
+      DB_USER: "${POSTGRES_USER}"
+      DB_PASSWORD: "${POSTGRES_PASSWORD}"
+
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TZ: UTC
+    expose:
+      - "8000"
+    networks:
+      - core-net
+
+  # --------------------------------------------------------------------------
+  # React dashboard (Vite build, served by nginx inside container)
+  # --------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: enviromesh-dashboard
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - core-net
+
+  # --------------------------------------------------------------------------
+  # Nginx reverse proxy — single entry point for browser access
+  # Routes: /api → backend:8000, / → dashboard:80
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.28-alpine
+    container_name: enviromesh-nginx
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - dashboard
+    networks:
+      - core-net
+
+volumes:
+  emqx_core_data:
+  emqx_core_log:
+  timescale_data:
+
+networks:
+  core-net:
+    driver: bridge

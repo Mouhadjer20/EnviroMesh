@@ -1,0 +1,16 @@
+# -----------------------------------------------------------------------------
+# EnviroMesh — Optional Hardware Dependencies (Raspberry Pi SX1278 LoRa Gateway)
+# -----------------------------------------------------------------------------
+# These packages provide SPI communication and GPIO reset pin control for the
+# SX1278 LoRa transceiver module connected directly to the Raspberry Pi header.
+#
+# Recommended installation on Raspberry Pi OS:
+#   sudo apt-get update && sudo apt-get install -y python3-spidev python3-rpi.gpio
+#
+# If installing inside a virtualenv on Raspberry Pi:
+#   pip install -r requirements-hardware.txt
+# -----------------------------------------------------------------------------
+
+spidev>=3.6; sys_platform == "linux"
+RPi.GPIO>=0.7.1; sys_platform == "linux" and platform_machine != "x86_64"
+rpi-lgpio>=0.6; sys_platform == "linux" and platform_machine == "aarch64"
