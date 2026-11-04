@@ -1,0 +1,107 @@
+## EnviroMesh Gateway — Docker Compose (RPi 1)
+##
+## Services:
+##   emqx-local  — Local EMQX broker for Wi-Fi ESP32 nodes
+##   gateway     — Python ingestion + forwarding service
+##
+## Usage:
+##   cp .env.example .env && nano .env
+##   docker compose up -d
+
+name: enviromesh-gateway
+
+services:
+
+  # --------------------------------------------------------------------------
+  # Local EMQX broker
+  # Receives telemetry from Wi-Fi ESP32 nodes on this LAN segment.
+  # Isolated from RPi 2's broker — NOT a cluster node.
+  # --------------------------------------------------------------------------
+  emqx-local:
+    image: emqx/emqx:5.8.8 # multi-arch: linux/amd64, linux/arm64, linux/arm/v7
+    container_name: enviromesh-emqx-local
+    hostname: emqx-local
+    restart: unless-stopped
+    environment:
+      EMQX_NODE_NAME: "emqx@127.0.0.1"
+      EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_DASHBOARD_USERNAME}"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_DASHBOARD_PASSWORD}"
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+    ports:
+      # MQTT — reachable by ESP32 nodes on the local LAN
+      - "${MQTT_BIND_IP:-0.0.0.0}:${MQTT_LOCAL_PORT:-1883}:1883"
+      # EMQX dashboard — restrict to localhost in production
+      - "${EMQX_DASHBOARD_BIND_IP:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}:18083"
+    volumes:
+      - emqx_local_data:/opt/emqx/data
+      - emqx_local_log:/opt/emqx/log
+      - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+    healthcheck:
+      test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+    networks:
+      - gateway-net
+
+  # --------------------------------------------------------------------------
+  # Gateway application
+  # Ingests Wi-Fi and LoRa telemetry, queues it in SQLite, forwards to RPi 2.
+  # --------------------------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: enviromesh-gateway
+    restart: unless-stopped
+    depends_on:
+      emqx-local:
+        condition: service_healthy
+    environment:
+      GATEWAY_ID: "${GATEWAY_ID:-GW01}"
+      GATEWAY_LAN_IP: "${GATEWAY_LAN_IP:-192.168.1.20}"
+
+      # Local EMQX (within Docker network — use service name)
+      MQTT_LOCAL_HOST: "emqx-local"
+      MQTT_LOCAL_PORT: "1883"
+      MQTT_LOCAL_USERNAME: "${MQTT_LOCAL_USERNAME}"
+      MQTT_LOCAL_PASSWORD: "${MQTT_LOCAL_PASSWORD}"
+
+      # Core EMQX on RPi 2 (external host IP)
+      MQTT_CORE_HOST: "${MQTT_CORE_HOST}"
+      MQTT_CORE_PORT: "${MQTT_CORE_PORT:-8883}"
+      MQTT_CORE_USERNAME: "${MQTT_CORE_USERNAME}"
+      MQTT_CORE_PASSWORD: "${MQTT_CORE_PASSWORD}"
+      MQTT_CORE_CA: "/app/certs/core-ca.crt"
+
+      MQTT_INPUT_TOPIC: "enviromesh/devices/+/telemetry"
+      MQTT_OUTPUT_TOPIC: "enviromesh/gateway/${GATEWAY_ID:-GW01}/telemetry"
+      MQTT_STATUS_TOPIC: "enviromesh/gateway/${GATEWAY_ID:-GW01}/status"
+      MQTT_QOS: "1"
+
+      SQLITE_PATH: "/var/lib/enviromesh/queue.db"
+      QUEUE_MAX_MESSAGES: "${QUEUE_MAX_MESSAGES:-50000}"
+      FORWARD_BATCH_SIZE: "${FORWARD_BATCH_SIZE:-10}"
+      FORWARD_RETRY_SECONDS: "${FORWARD_RETRY_SECONDS:-5}"
+
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    # SPI and GPIO for LoRa SX1278 hardware
+    #devices: 
+    #  - /dev/spidev0.0:/dev/spidev0.0
+    #  - /dev/gpiomem:/dev/gpiomem
+    volumes:
+      - gateway_queue:/var/lib/enviromesh
+      - ./certs:/app/certs:ro
+    networks:
+      - gateway-net
+
+volumes:
+  emqx_local_data:
+  emqx_local_log:
+  gateway_queue:
+
+networks:
+  gateway-net:
+    driver: bridge

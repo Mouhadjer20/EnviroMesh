@@ -1,0 +1,14 @@
+# EnviroMesh Gateway — Python dependencies
+# Runs on Raspberry Pi 4 (arm64 / armv7l) under Python 3.11
+
+# MQTT client
+paho-mqtt>=2.1.0
+
+# Environment variable loading
+python-dotenv>=1.0.0
+
+# Hardware drivers — only installed when running on RPi hardware.
+# pip ignores these on other platforms via the environment marker.
+spidev>=3.6; sys_platform == "linux"
+RPi.GPIO>=0.7.1; sys_platform == "linux"
+

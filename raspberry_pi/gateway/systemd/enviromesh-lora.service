@@ -1,0 +1,33 @@
+# ==============================================================================
+# EnviroMesh — Physical LoRa Receiver Native Systemd Service (RPi 1 Host)
+# Runs natively on the Raspberry Pi 1 host OS where hardware SPI (/dev/spidev0.0)
+# and GPIO pins are directly accessible without containerization.
+#
+# Installation on RPi 1:
+#   sudo cp raspberry_pi/gateway/systemd/enviromesh-lora.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable enviromesh-lora.service
+#   sudo systemctl start enviromesh-lora.service
+# ==============================================================================
+
+[Unit]
+Description=EnviroMesh SX1278 LoRa Receiver Service (Native Host)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/enviromesh/raspberry_pi/gateway
+ExecStart=/home/pi/enviromesh/.venv/bin/python3 -m gateway.lora_receiver
+Restart=always
+RestartSec=5s
+
+User=pi
+Group=pi
+
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

@@ -20,7 +20,7 @@ services:
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log
-      - ./infrastructure/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./raspberry_pi/core/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
     healthcheck:
       test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
       interval: 30s
@@ -59,7 +59,7 @@ services:
   # Python API, MQTT Subscriber, validation, and database writer
   backend:
     build:
-      context: ./raspberry_pi/backend
+      context: ./raspberry_pi/core/backend
       dockerfile: Dockerfile
     container_name: enviromesh-backend
     restart: unless-stopped
@@ -96,7 +96,7 @@ services:
   # Web dashboard frontend
   dashboard:
     build:
-      context: ./raspberry_pi/dashboard
+      context: ./raspberry_pi/core/dashboard
       dockerfile: Dockerfile
     container_name: enviromesh-dashboard
     restart: unless-stopped
@@ -113,7 +113,7 @@ services:
     ports:
       - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8081}:80"
     volumes:
-      - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./raspberry_pi/core/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
       - dashboard

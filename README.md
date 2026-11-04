@@ -1,565 +1,593 @@
-# Enterprise IoT Architecture: Technical Specification & Implementation Blueprint
+# EnviroMesh: Two-Raspberry-Pi Distributed Architecture
 
-**Project Title:** EnviroMesh
-
-**Target Audience:** Development & Engineering Team
-
-**Document Version:** 1.0
+**Enterprise Smart Environmental Monitoring Network with LoRa & Wi-Fi Edge Ingestion**
 
 ---
 
 ## Table of Contents
 
-- [1. Executive Summary & System Overview](#1-executive-summary--system-overview)
-- [2. Hardware Topology & Communication Matrix](#2-hardware-topology--communication-matrix)
-- [3. Revised System Topology Diagram](#3-revised-system-topology-diagram)
-- [4. Database Architecture (Polyglot Persistence)](#4-database-architecture-polyglot-persistence)
-  - [Database 1: SQL (PostgreSQL) — Control Plane & Metadata](#database-1-sql-postgresql--control-plane--metadata)
-  - [Database 2: Time-Series (TimescaleDB) — Telemetry Plane](#database-2-time-series-timescaledb--telemetry-plane)
-- [5. Standardized Data Provenance & Payload Structure](#5-standardized-data-provenance--payload-structure)
-  - [5.1. Standard Payload Contract](#51-standard-payload-contract)
-  - [5.2. Sensor Catalog and Metric Naming](#52-sensor-catalog-and-metric-naming)
-  - [5.3. Future Sensor Expansion](#53-future-sensor-expansion)
-  - [5.4. TimescaleDB Integration](#54-timescaledb-integration)
-  - [5.5. Data Provenance and Security Requirements](#55-data-provenance-and-security-requirements)
-  - [5.6. Backend Directory Structure (Python/FastAPI)](#56-backend-directory-structure-pythonfastapi)
-- [6. Security Architecture & Access Control](#6-security-architecture--access-control-next-phase-not-including-in-this-phase-of-deployment-db-and-installation-devices)
-  - [A. Authentication & RBAC](#a-authentication--rbac)
-  - [B. Simulated Attack Vectors & Defensive Engineering](#b-simulated-attack-vectors--defensive-engineering)
-- [7. Developer Automation & Helper Scripts (`scripts/`)](#7-developer-automation--helper-scripts-scripts)
-- [8. Implementation Roadmap & Phase Status](#8-implementation-roadmap--phase-status)
-- [9. Quick Start Guide](#9-quick-start-guide)
-- [10. Resources & References](#10-resources--references)
+- [EnviroMesh: Two-Raspberry-Pi Distributed Architecture](#enviromesh-two-raspberry-pi-distributed-architecture)
+  - [Table of Contents](#table-of-contents)
+  - [1. System Overview](#1-system-overview)
+    - [Core Design Philosophy](#core-design-philosophy)
+  - [2. Final Architecture](#2-final-architecture)
+    - [RPi 1 — Edge Gateway (`192.168.1.20`)](#rpi-1--edge-gateway-192168120)
+    - [RPi 2 — Central Core (`192.168.1.5`)](#rpi-2--central-core-19216815)
+  - [3. Two-Raspberry-Pi Topology Diagram](#3-two-raspberry-pi-topology-diagram)
+  - [4. Hardware Inventory \& Pin Assignments](#4-hardware-inventory--pin-assignments)
+    - [Verified Node Configurations](#verified-node-configurations)
+    - [ESP32 Pin Mapping Table](#esp32-pin-mapping-table)
+      - [Node G11 / Node G41 (LoRa 433 MHz Nodes)](#node-g11--node-g41-lora-433-mhz-nodes)
+      - [Node G31 (Wi-Fi Node)](#node-g31-wi-fi-node)
+      - [Node G61 (Wi-Fi Servo \& Actuator Node)](#node-g61-wi-fi-servo--actuator-node)
+  - [5. Network Configuration \& Ports](#5-network-configuration--ports)
+  - [6. Data Flow \& Sequence Diagram](#6-data-flow--sequence-diagram)
+  - [7. RPi 1 Gateway Setup \& Operation](#7-rpi-1-gateway-setup--operation)
+    - [Configuration (`.env`)](#configuration-env)
+    - [Starting the Gateway](#starting-the-gateway)
+  - [8. RPi 2 Core Setup \& Operation](#8-rpi-2-core-setup--operation)
+    - [Configuration (`.env`)](#configuration-env-1)
+    - [Starting the Core](#starting-the-core)
+  - [9. SQLite Queue Design \& Resilience](#9-sqlite-queue-design--resilience)
+    - [Schema](#schema)
+    - [Durability Guarantees](#durability-guarantees)
+  - [10. TLS Certificate Setup](#10-tls-certificate-setup)
+    - [Step 1: Generate PKI on RPi 2](#step-1-generate-pki-on-rpi-2)
+    - [Step 2: Copy CA Certificate to RPi 1](#step-2-copy-ca-certificate-to-rpi-1)
+  - [11. EMQX Broker Configurations (RPi 1 \& RPi 2)](#11-emqx-broker-configurations-rpi-1--rpi-2)
+    - [Local EMQX (RPi 1) ACL (`raspberry_pi/gateway/emqx/acl.conf`)](#local-emqx-rpi-1-acl-raspberry_pigatewayemqxaclconf)
+    - [Central EMQX (RPi 2) ACL (`raspberry_pi/core/emqx/acl.conf`)](#central-emqx-rpi-2-acl-raspberry_picoreemqxaclconf)
+  - [12. Database Schema \& TimescaleDB Setup](#12-database-schema--timescaledb-setup)
+    - [Key Tables](#key-tables)
+  - [13. API \& Dashboard](#13-api--dashboard)
+    - [Key Endpoints](#key-endpoints)
+  - [14. ESP32 Firmware Configuration](#14-esp32-firmware-configuration)
+  - [15. Security \& Hardening](#15-security--hardening)
+  - [16. Deployment Procedures (Step-by-Step)](#16-deployment-procedures-step-by-step)
+    - [Deploying RPi 2 (Core) First](#deploying-rpi-2-core-first)
+    - [Deploying RPi 1 (Gateway)](#deploying-rpi-1-gateway)
+  - [17. Health Checks \& Verification](#17-health-checks--verification)
+    - [Gateway Verification (on RPi 1)](#gateway-verification-on-rpi-1)
+    - [Core Verification (on RPi 2)](#core-verification-on-rpi-2)
+  - [18. Troubleshooting Guide](#18-troubleshooting-guide)
+  - [19. Maintenance \& Operations](#19-maintenance--operations)
+    - [Database Backups](#database-backups)
+    - [Inspecting Gateway Queue](#inspecting-gateway-queue)
+    - [Container Updates \& Rolling Restarts](#container-updates--rolling-restarts)
 
 ---
 
-## 1. Executive Summary & System Overview
+## 1. System Overview
 
-This document outlines the complete architectural blueprint for a secure, scalable, and polyglot IoT platform. The system integrates multiple communication protocols (**LoRA, Wi-Fi, BLE, Ethernet, MQTT, RTSP, HTTPS**) to handle environmental monitoring, video streaming, and local actuation, backed by a dual-database design (**SQL** for management/metadata and **NoSQL/Time-Series** for high-frequency telemetry) with strict **Role-Based Access Control (RBAC)**.
+**EnviroMesh** is an industrial-grade environmental monitoring platform designed to collect, validate, persist, and visualize sensor telemetry from distributed ESP32 nodes across warehouses, agricultural facilities, and industrial sectors.
 
----
-
-## 2. Hardware Topology & Communication Matrix
-
-The network is divided into field sensor nodes, edge gateways, core servers, and user dashboards.
-
-| Component                       | Source File / Module                                                                       | Hardware / Sensors                                   | Protocol              | Destination            | Status               |
-| ------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------- | --------------------- | ---------------------- | -------------------- |
-| **ESP32 Node 1 (G11)**          | [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino)             | MQ-2 (LPG model + NVS $R_0$), DHT11, Water sensor    | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
-| **ESP32 Node 2 (G41)**          | [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino)   | MQ-2, DHT11, Water sensor                            | LoRa (433 MHz)        | RPi (LoRa Gateway)     | **Production-Ready** |
-| **ESP32 Node 3 (G31)**          | [`firmware/nodes/node_g31/src/main.ini`](firmware/nodes/node_g31/src/main.ini)             | BMP280, MQ-2, Water sensor                           | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Phase 3.1 Stub       |
-| **ESP32 Servo Node (G61)**      | [`firmware/nodes/node_g61_servo/src/main.ino`](firmware/nodes/node_g61_servo/src/main.ino) | MQ-2, DHT11, Water, PIR, 9g Micro Servo              | Wi-Fi MQTT            | EMQX Broker (`:1883`)  | **Operational**      |
-| **Test Node G42**               | [`firmware/nodes/node_g42/src/main/main.ino`](firmware/nodes/node_g42/src/main/main.ino)   | Wi-Fi Station + PubSubClient                         | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
-| **Test Node G43**               | [`firmware/nodes/node_g43/src/main.ino`](firmware/nodes/node_g43/src/main.ino)             | Schema-Compliant Telemetry Publisher                 | Wi-Fi (MQTT / TCP)    | EMQX Broker (`:1883`)  | Test Harness         |
-| **Raspberry Pi Gateway & Core** | [`raspberry_pi/`](raspberry_pi/)                                                           | SX1278 SPI, EMQX Broker, TimescaleDB, FastAPI, Nginx | HTTPS, WSS, MQTT, SPI | User Dashboard & Admin | **Core Operational** |
+### Core Design Philosophy
+- **Physical Isolation of Edge Ingestion**: Field nodes (LoRa and Wi-Fi) connect **strictly to RPi 1 (Gateway)**. Field microcontrollers never communicate directly with the central database or core processing server.
+- **Zero Data Loss via Persistent Edge Queueing**: RPi 1 buffers all incoming telemetry in an ACID-compliant SQLite database with Write-Ahead Logging (`WAL`) and `FULL` synchronization. If RPi 2 or the local network goes offline, RPi 1 continues collecting and storing sensor data indefinitely (up to 50,000 packets) without packet loss.
+- **Encrypted Inter-Pi Forwarding**: Data transfer between RPi 1 and RPi 2 is secured using **MQTT over TLS (port 8883)** with custom PKI certificates and MQTT QoS 1.
+- **Time-Series Storage & Idempotency**: RPi 2 runs PostgreSQL with TimescaleDB hypertables, backed by a deterministic deduplication table that eliminates duplicate packets caused by RF retries or network reconnections.
 
 ---
 
-## 3. Revised System Topology Diagram
+## 2. Final Architecture
+
+The platform is split cleanly across two dedicated Raspberry Pi 4 Model B single-board computers:
+
+### RPi 1 — Edge Gateway (`192.168.1.20`)
+- **LoRa Receiver**: Direct SPI communication with the SX1278 RA-02 transceiver at 433 MHz.
+- **Local EMQX Broker**: Lightweight MQTT 5.x broker listening on port 1883 for local Wi-Fi ESP32 nodes.
+- **Telemetry Ingestion & Normalizer**: Extracts raw fields, validates constraints, computes a deterministic UUIDv5 message identifier, and normalizes payloads into a uniform JSON schema.
+- **Signal Quality Telemetry**: Attaches hardware RSSI and SNR to received LoRa packets.
+- **SQLite Persistent Queue**: FIFO buffer ensuring durability across reboots and network partitions.
+- **MQTT Forwarder Service**: Dequeues messages and publishes them to RPi 2 with QoS 1 over TLS.
+- **Health Monitor**: Periodically tracks queue depth, buffer utilization, and subsystem liveness.
+
+### RPi 2 — Central Core (`192.168.1.5`)
+- **Central EMQX Broker**: Production MQTT 5.x broker listening on port 8883 (TLS required for RPi 1 forwarder) and internal port 1883 for local backend subscribers.
+- **FastAPI Telemetry Subscriber**: Consumes forwarded telemetry, validates payloads, and manages transactional insertion.
+- **Deduplication Engine**: Enforces at-most-once storage via the `processed_messages` table.
+- **PostgreSQL 16 + TimescaleDB 2.17**: Partitioned time-series database for multi-year telemetry analytics (internal network only; port 5432 is unexposed to LAN).
+- **FastAPI REST & WebSocket Server**: High-performance backend hosting device metadata, historical telemetry queries, and real-time streaming endpoints.
+- **React + Vite Dashboard**: Modern, responsive dashboard visualizing live environmental readings, alerts, and node telemetry.
+- **Nginx Reverse Proxy**: Single entry point (`:8080`) serving the dashboard and proxying `/api/` traffic to FastAPI.
+
+---
+
+## 3. Two-Raspberry-Pi Topology Diagram
+
+```
+                 FIELD SENSING LAYER
+      ┌────────────────────┐     ┌────────────────────┐
+      │  ESP32 LoRa Nodes  │     │ ESP32 Wi-Fi Nodes  │
+      │   (G11, G41)       │     │(G31, G42, G43, G61)│
+      └─────────┬──────────┘     └─────────┬──────────┘
+                │                          │
+                │ 433 MHz RF               │ Wi-Fi MQTT (:1883)
+                ▼                          ▼
+┌──────────────────────────────────────────────────────────┐
+│              RPi 1: GATEWAY (192.168.1.20)               │
+│                                                          │
+│   SX1278 SPI Receiver       Local EMQX Broker (:1883)    │
+│            │                             │               │
+│            └──────────────┬──────────────┘               │
+│                           ▼                              │
+│              Payload Normalizer & Validator              │
+│                           │                              │
+│                           ▼                              │
+│              SQLite Queue (WAL + FULL Sync)              │
+│                           │                              │
+│                           ▼                              │
+│             TLS MQTT Forwarder (paho-mqtt)               │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+                            │ MQTT over TLS (:8883, QoS 1)
+                            │ Mutual / CA Verified
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│                 RPi 2: CORE (192.168.1.5)               │
+│                                                          │
+│               Central EMQX Broker (:8883)                │
+│                           │                              │
+│                           ▼                              │
+│                Backend MQTT Subscriber                   │
+│                           │                              │
+│                           ▼                              │
+│             Duplicate Detection & TimescaleDB            │
+│          (sensor_telemetry + processed_messages)         │
+│                           ▲                              │
+│                           │ Internal Connection          │
+│                           ▼                              │
+│                FastAPI Backend (:8000)                   │
+│                           ▲                              │
+│                           │ Reverse Proxy Routing        │
+│                           ▼                              │
+│                 Nginx Proxy (:8080)                      │
+│                           ▲                              │
+│                           │ Static SPA Delivery          │
+│                           ▼                              │
+│                 React + Vite Dashboard                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4. Hardware Inventory & Pin Assignments
+
+### Verified Node Configurations
+
+| Device  | Primary Role                | Transport    | Hardware Sensors & Actuators                    | Status             |
+| ------- | --------------------------- | ------------ | ----------------------------------------------- | ------------------ |
+| **G11** | Hazardous Gas & Environment | LoRa 433 MHz | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak  | Operational        |
+| **G41** | Warehouse Perimeter         | LoRa 433 MHz | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak  | Operational        |
+| **G31** | Sector C Utility Room       | Wi-Fi MQTT   | BMP280 (Press/Temp), MQ-2 (Gas), Water Leak     | Specification Stub |
+| **G61** | Ventilation & Actuation     | Wi-Fi MQTT   | MQ-2, DHT11, Water Leak, PIR Motion, SG90 Servo | Operational        |
+| **G42** | Wi-Fi Field Node            | Wi-Fi MQTT   | Temperature, Humidity, Smoke Simulator          | Test Harness       |
+| **G43** | Schema Telemetry Node       | Wi-Fi MQTT   | Multi-sensor synthetic load                     | Test Harness       |
+
+### ESP32 Pin Mapping Table
+
+#### Node G11 / Node G41 (LoRa 433 MHz Nodes)
+- **DHT11 Data**: GPIO 4
+- **MQ-2 Analog (AO)**: GPIO 0 (ADC1)
+- **MQ-2 Digital (DO)**: GPIO 2
+- **Water Sensor (Signal)**: GPIO 15
+- **LoRa SX1278 (Ra-02)**:
+  - **NSS / SS**: GPIO 16
+  - **RST**: GPIO 14
+  - **DIO0**: GPIO 26
+  - **SCK**: GPIO 5
+  - **MISO**: GPIO 19
+  - **MOSI**: GPIO 32
+- **Frequency**: 433.0 MHz (SF7, BW 125 kHz, CR 4/5, Sync Word `0x12`)
+
+#### Node G31 (Wi-Fi Node)
+- **MQ-2 Gas (AO)**: GPIO 34 (ADC1_CH6)
+- **Water Sensor (AO)**: GPIO 35 (ADC1_CH7)
+- **BMP280 (I2C)**: SDA GPIO 21, SCL GPIO 22
+
+#### Node G61 (Wi-Fi Servo & Actuator Node)
+- **DHT11 Data**: GPIO 4
+- **MQ-2 Analog (AO)**: GPIO 34
+- **Water Sensor (AO)**: GPIO 35
+- **PIR Motion (OUT)**: GPIO 13
+- **SG90 Micro Servo (PWM)**: GPIO 18
+
+---
+
+## 5. Network Configuration & Ports
+
+| Host      | Service            | Port  | Protocol | Binding / Scope  | Purpose                                |
+| --------- | ------------------ | ----- | -------- | ---------------- | -------------------------------------- |
+| **RPi 1** | Local EMQX         | 1883  | TCP      | `0.0.0.0` (LAN)  | Ingestion from Wi-Fi ESP32 nodes       |
+| **RPi 1** | EMQX Dashboard     | 18083 | TCP      | `127.0.0.1`      | Local broker administration            |
+| **RPi 1** | SSH                | 22    | TCP      | LAN / Management | Linux maintenance                      |
+| **RPi 2** | Central EMQX TLS   | 8883  | TCP/TLS  | `0.0.0.0` (LAN)  | Ingestion from RPi 1 Forwarder         |
+| **RPi 2** | Central EMQX Local | 1883  | TCP      | Docker Network   | FastAPI subscriber ingestion           |
+| **RPi 2** | EMQX Dashboard     | 18083 | TCP      | `127.0.0.1`      | Central broker administration          |
+| **RPi 2** | Nginx Web Server   | 8080  | TCP      | `0.0.0.0` (LAN)  | React Dashboard & REST API access      |
+| **RPi 2** | FastAPI Backend    | 8000  | TCP      | Docker Network   | REST API & WebSockets (Internal)       |
+| **RPi 2** | TimescaleDB        | 5432  | TCP      | Docker Network   | Relational time-series data (Internal) |
+| **RPi 2** | SSH                | 22    | TCP      | LAN / Management | Linux maintenance                      |
+
+---
+
+## 6. Data Flow & Sequence Diagram
 
 ```text
-        +====================================================================+
-        |                              FIELD SENSORS & ACTUATORS             |
-        +====================================================================+
-        |                                                                    |
-        |     +------------------------+      +------------------------+     |
-        |     | ESP32 NODE 1 (G1)      |      | ESP32 NODE 2 (G4)      |     |
-        |     |------------------------|      |------------------------|     |
-        |     | MQ-2  : Gas / Smoke    |      | MQ-2  : Gas / Smoke    |     |
-        |     | DHT11 : Temp / Hum     |      | DHT11 : Temp / Hum     |     |
-        |     | Water : Leak Detection |      | Water : Leak Detection |     |
-        |     +-----------+------------+      +-----------+------------+     |
-        |                 |                               |                  |
-        |                 +---------------+---------------+                  |
-        |                                 |                                  |
-        |                          LoRa 433 MHz                              |
-        |                                 |                                  |
-        |  +---------------------------+  |   +---------------------------+  |
-        |  | ESP32 NODE 3 (G3)         |  |   | ESP32 SERVO NODE (G6)     |  |
-        |  |---------------------------|  |   |---------------------------|  |
-        |  | BMP280 : Pressure / Temp  |  |   | MQ-2    : Gas / Smoke     |  |
-        |  | MQ-2   : Gas / Smoke      |  |   | DHT11   : Temp / Hum      |  |
-        |  | Water  : Leak Detection   |  |   | Water   : Leak Detection  |  |
-        |  |                           |  |   | PIR     : Motion Detection|  |
-        |  | Wi-Fi / MQTT over TCP     |  |   | Servo   : Valve / Latch   |  |
-        |  +-------------+-------------+  |   +-------------+-------------+  |
-        |                |                |                 |                |
-        +================|================|=================|================+
-                         |                |                 |
-                         | Wi-Fi /        |                 | Wi-Fi / MQTT over TCP
-                         | MQTT over TCP  |                 |
-                         v                v                 v
-        +====================================================================+
-        |                           EDGE & CORE PROCESSING LAYER             |
-        +====================================================================+
-        |                                                                    |
-        |        +------------------------------------------------+          |
-        |        | RASPBERRY PI                                   |          |
-        |        | CORE PROCESSING SERVER                         |          |
-        |        |------------------------------------------------|          |
-        |        | MQTT Broker (EMQX)                             |          |
-        |        | TimescaleDB                                    |          |
-        |        | Telemetry & Provenance Storage                 |          |
-        |        | MediaMTX Video Stream Proxy                    |          |
-        |        | BLE-to-MQTT Bridge (if BLE is used)            |          |
-        |        | Nginx Reverse Proxy                            |          |
-        |        | Keycloak Authentication & RBAC                 |          |
-        |        | MQTT Ingestion & Data Processing               |          |
-        |        | LoRa Frame Reception                           |          |
-        |        | LoRa Concentrator (SX1278)                     |          |
-        |        | MQTT Ingestion & Data Processing               |          |
-        |        +------------------------+-----------------------+          |
-        |                                 ^                                  |
-        +=================================|==================================+
-                                          |
-               Wi-Fi / MQTT over TCP      |
-               from ESP32 Node 3 & G6     |
-                                          |
-                                          |
-        +=====================================================================+
-        |                                  VIDEO SUBSYSTEM                    |
-        +=====================================================================+
-        |                                                                     |
-        |  +---------------------+   Wi-Fi / RTSP   +----------------------+  |
-        |  | ESP32-CAM (OPTIONAL)| ---------------> | RPi: MediaMTX        |  |
-        |  | Video Capture       |                  | Video Stream Proxy   |  |
-        |  +---------------------+                  +-------------+--------+  |
-        |                                                         |           |
-        +=========================================================|===========+
-                                                                  |
-                                                  HTTPS / WSS     | 
-                                                                  v
-        +=====================================================================+
-        |                           USER DASHBOARD                            |
-        +=====================================================================+
-        |                                                                     |
-        |  +---------------------------------------------------------------+  |
-        |  | Web Interface                                                 |  |
-        |  |                                                               |  |
-        |  | - Real-Time Sensor Telemetry                                  |  |
-        |  | - Gas / Temperature / Humidity / Water / Pressure Monitoring  |  |
-        |  | - Motion Detection & Actuator Status                          |  |
-        |  | - Video Monitoring (if ESP32-CAM is deployed)                 |  |
-        |  | - Role-Based Access Control (RBAC)                            |  |
-        |  | - Zone-Scoped Access (Zone A / Zone B)                        |  |
-        |  | - Alerts, Events & Historical Data                            |  |
-        |  +---------------------------------------------------------------+  |
-        |                                                                     |
-        +=====================================================================+
+[ESP32 Node]      [RPi 1 Local]    [RPi 1 SQLite]    [RPi 1 Forwarder]    [RPi 2 EMQX]    [RPi 2 Backend]   [TimescaleDB]
+     │                  │                 │                  │                 │                 │                │
+     │── Telemetry ────>│                 │                  │                 │                 │                │
+     │   (LoRa/Wi-Fi)   │── Validate & ──>│                  │                 │                 │                │
+     │                  │   Enqueue       │                  │                 │                 │                │
+     │                  │                 │<── Read Batch ───│                 │                 │                │
+     │                  │                 │                  │── TLS Publish ─>│                 │                │
+     │                  │                 │                  │   (QoS 1)       │── On Message ──>│                │
+     │                  │                 │                  │                 │                 │── Check Dedup ─│
+     │                  │                 │                  │                 │                 │   (Processed?) │
+     │                  │                 │                  │                 │                 │── INSERT ─────>│
+     │                  │                 │                  │<── PUBACK ──────│                 │                │
+     │                  │                 │<── Mark Sent ────│                 │                 │                │
+     │                  │                 │    (DELETE)      │                 │                 │                │
 ```
-## 4. Database Architecture (Polyglot Persistence)
-
-To balance relational integrity with extreme write speeds, the system uses two distinct databases hosted on **Raspberry Pi**.
-
-### Database 1: SQL (PostgreSQL) — *Control Plane & Metadata*
-
-Stores user identities, password hashes, RBAC permissions, and the physical asset registry (mapping exact device IDs to physical zones and responsible technicians).
-
-* **Table: `groups`**
-    * `id` (UUID, primary Key)
-    * `group_code` (VARCHAR(2), UNIQUE, NOT NULL — e.g., G1, G3, G4, G6)
-    * `Description` (Text)
-
-* **Table: `users`**
-    * `id` (UUID, Primary Key)
-    * `first_name` (VARCHAR, NOT NULL)
-    * `last_name` (VARCHAR, NOT NULL)
-    * `email` (VARCHAR, Unique)
-    * `password` (VARCHAR, hash)
-    * `group_id` (int)
-    * `role` (VARCHAR: `admin`, `zone_technician`)
-
-* **Table: `Sensors`**
-    * `id` (UUID, Primary Key)
-    * `name` (VARCHAR, NOT NULL)
-    * `Description` (VARCHAR)
-
-* **Table: `devices`**
-    * `device_id` (VARCHAR(3), Primary Key - `<GROUPE_ID>+<INT_GENERATED>` e.g., `G1<1-9>`)
-    * `zone` (VARCHAR - e.g., `Sector_A_Warehouse`)
-    * `latitude` / `longitude` (FLOAT)
-    * `group_id` (UUID, Foreign Key to `groups`)
-
-* **Table: `sensor_devices`**
-  * `id` (UUID, Primary Key)
-  * `sensor_id` (UUID, Foreign Key referencing sensors.id, NOT NULL)
-  * `device_id` (VARCHAR(3), Foreign Key referencing devices.device_id, NOT NULL)
-  * `installed_at` (TIMESTAMPTZ, NOT NULL, DEFAULT CURRENT_TIMESTAMP)
-  * `status` (VARCHAR, NOT NULL, DEFAULT active)
-  * `configuration` (JSONB, optional — sensor-specific settings)
-  * `UNIQUE(sensor_id, device_id)` — prevents duplicate sensor-device assignments
-
-### Database 2: Time-Series (TimescaleDB) — *Telemetry Plane*
-
-Stores high-frequency sensor readings, timestamps, and unstructured raw packets to prevent database bloat and optimize time-based queries.
-
-* **Document / Table Schema (`sensor_telemetry`):**
-* `timestamp` (DateTime, Indexed)
-* `device_id` (VARCHAR)
-* `zone` (VARCHAR)
-* `metrics` (JSON object containing dynamic keys like `gas_ppm`, `temperature_c`, `humidity`, `water_leak`)
-* `received_at` (DateTime)
-* `protocol` 
-* `metadata` (JSON Object containing static information about device like `group_code`, `firmware_version`, `sensor_id`, `device_id`)
-
-
 
 ---
 
-## 5. Standardized Data Provenance & Payload Structure
+## 7. RPi 1 Gateway Setup & Operation
 
-Every field device must attach standardized metadata to its telemetry messages. This enables the core server to identify the originating device, its group, its deployment zone, the communication protocol, and the measurements reported by each sensor.
+The gateway directory (`raspberry_pi/gateway/`) provides an independent deployment unit for RPi 1.
 
-The system uses a **polymorphic JSON payload**: every message shares the same top-level structure, while the `metrics` object varies according to the sensor types installed on the device.
-
-### 5.1. Standard Payload Contract
-
-#### Canonical Ingestion Schema (Full Format)
-All telemetry-producing nodes transmitting over Wi-Fi MQTT, or the normalized representation in the ingestion pipeline, follow this structure:
-
-```json
-{
-  "timestamp": "2026-10-23T08:00:00Z",
-  "device_id": "G11",
-  "group_code": "G1",
-  "zone": "Sector_A_Warehouse",
-  "protocol": "lora",
-  "metrics": {
-    "gas_ppm": 42.5,
-    "smoke_detected": false,
-    "temperature_c": 23.8,
-    "humidity_pct": 55.2
-  },
-  "status": {
-    "battery_voltage": 3.72,
-    "rssi_dbm": -85,
-    "snr_db": 7.2
-  }
-}
-```
-
-#### Over-the-Air Compact LoRa Schema (< 250 Bytes)
-Due to the **SX1278 hardware FIFO limit (256 bytes)**, field LoRa nodes (`G11`, `G41`) transmit a memory-safe, compacted JSON payload strictly bounded under 250 bytes:
-
-```json
-{
-  "device_id": "G41",
-  "zone": "Sector_B_Warehouse",
-  "protocol": "lora",
-  "metrics": {
-    "gas_adc_raw": 0,
-    "smoke_detected": true,
-    "temperature_c": 23.6,
-    "humidity_pct": 43.7,
-    "water_leak_detected": false
-  },
-  "metadata": {
-    "uptime_ms": 568,
-    "packet_counter": 1
-  }
-}
-```
-
-**Optimization & Ingestion Rules:**
-- **Over-the-Air Airtime Optimization:** Redundant static fields (`timestamp`, `group_code`) are omitted over RF to conserve battery, reduce airtime, and stay well under 250 bytes.
-- **Gateway Rehydration:** Upon reception in `services/lora_receiver.py`, the Raspberry Pi gateway automatically assigns `timestamp` (UTC), resolves `group_code` from `device_id`, and stores raw bytes to `raw_sensor_packets` before normalizing to `sensor_telemetry`.
-- **Key Normalization:** Legacy `"status"` blocks are mapped to `"metadata"`, and sensor readings with numeric values are rounded before transmission to prevent dangling-pointer memory corruption.
-
----
-
-### 5.2. Sensor Catalog and Metric Naming
-
-Use the `sensors` table to maintain the canonical hardware catalog. Keep the JSON metric keys consistent across firmware versions.
-
-| Sensor catalog name | Standardized metric keys               |
-| ------------------- | -------------------------------------- |
-| `MQ-2`              | `gas_ppm`, `smoke_detected`            |
-| `DHT11`             | `temperature_c`, `humidity_pct`        |
-| `Water Sensor`      | `water_leak_detected`                  |
-| `BMP280`            | `pressure_hpa`, `bmp280_temperature_c` |
-| `PIR`               | `motion_detected`                      |
-
-These are example metric conventions; your firmware must define the actual measurement semantics and units. The water sensor may provide only a wet/dry state, not a water level. The MQ-2 does not automatically provide reliable calibrated ppm values.
-
----
-
-### 5.3. Future Sensor Expansion
-
-Future projects can use the same top-level contract without changing the database table structure.
-
-Example metric objects:
-
-**Light sensor**
-```json
-{
-  "ambient_light_lux": 450.0,
-  "darkness_detected": false
-}
-```
-
-**Flame sensor**
-```json
-{
-  "flame_detected": true,
-  "infrared_intensity_raw": 890
-}
-```
-
-**Ultrasonic distance sensor**
-```json
-{
-  "distance_cm": 125.4,
-  "tank_level_pct": 75.0
-}
-```
-
-These are extension examples, not sensors currently registered in the catalog. Add their canonical definitions to `sensors` and their assignments to `sensor_devices` before deployment.
-
----
-
-### 5.4. TimescaleDB Integration
-
-The standardized envelope maps to the `sensor_telemetry` table as follows:
-
-| Payload field         | Database field                                        |
-| --------------------- | ----------------------------------------------------- |
-| `timestamp`           | `timestamp` (`TIMESTAMPTZ`)                           |
-| `device_id`           | `device_id` (`VARCHAR(3)`)                            |
-| `zone`                | `zone` (`VARCHAR`)                                    |
-| `metrics`             | `metrics` (`JSONB`)                                   |
-| `protocol`            | `protocol` (`VARCHAR`)                                |
-| `status`              | `metadata` (`JSONB`), or a dedicated status structure |
-| Server ingestion time | `received_at` (`TIMESTAMPTZ`)                         |
-
-The `group_code` can be resolved to the relational group registry during ingestion. If you need it directly in telemetry queries, it can also be stored as denormalized metadata.
-
-For LoRa nodes, Raspberry Pi should decode the packet and construct the standardized JSON envelope. Wi-Fi nodes can publish the same envelope directly through MQTT.
-
-With TimescaleDB, keep the same JSON payload contract and store `metrics` as `JSONB`.
-
----
-
-### 5.5. Data Provenance and Security Requirements
-
-1. **Device registration:** Reject telemetry from unregistered device IDs.
-2. **Group consistency:** Verify that the device belongs to the group associated with its registry record.
-3. **Timestamp validation:** Reject malformed or implausibly future-dated timestamps; define a tolerance for clock drift.
-4. **Transport integrity:** Authenticate MQTT clients and protect network connections wherever supported.
-5. **Data provenance:** Record gateway reception time, packet identifiers or sequence numbers when available, and relevant radio metadata.
-6. **Access control:** Enforce group- and zone-scoped authorization in the core server, not through device-supplied fields.
-7. **Actuator safety:** Separate telemetry from commands and require authorization, validation, and safe-state handling.
-8. **Retention:** Configure telemetry retention according to project requirements and preserve selected events when audit or incident investigations require it.
-
-This standardized schema provides a consistent foundation for the four registered ESP32 node types, the two Raspberry Pi processing layers, and future sensor extensions.
-
-### 5.6. Backend Directory Structure (Python/FastAPI)
-
-The core server backend was restructured into `raspberry_pi/backend/` with a
-clean separation between API routes, business services, and infrastructure.
-
-#### 5.6.1. Python Package Layout
-
-```
-raspberry_pi/backend/
-├── main.py                       # Entry point: FastAPI app + MQTT subscriber loop + LoRa thread
-├── requirements.txt              # Core production dependencies (psycopg2-binary, fastapi, paho-mqtt)
-├── requirements-hardware.txt     # Raspberry Pi hardware drivers (spidev, RPi.GPIO)
-├── Dockerfile                    # Container image with hardware device passthrough
-├── README.md                     # Backend architecture documentation
-├── routes/                       # FastAPI route modules (absolute imports)
-│   ├── __init__.py
-│   ├── devices.py                # GET/POST/PUT/DELETE /devices
-│   ├── telemetry.py              # GET /telemetry, GET /telemetry/{id}/latest
-│   ├── alerts.py                 # GET/POST /alerts, PATCH /alerts/{id}/ack
-│   └── users.py                  # User management endpoints
-│
-├── auth/                         # Authentication & RBAC specifications
-│   └── README.md                 # JWT & bcrypt architecture documentation
-│
-└── services/                     # Core ingestion, validation & persistence
-    ├── __init__.py
-    ├── colored_logger.py         # High-visibility ANSI colored logging
-    ├── mqtt_subscriber.py        # Paho-MQTT client; subscribes, validates, persists
-    ├── database_writer.py        # TimescaleDB hypertable writer with VARCHAR(3) safety
-    ├── lora_receiver.py          # SX1278 SPI driver with graceful software fallback
-    └── telemetry_validator.py    # Validates telemetry metrics & physical boundaries
-```
-
-#### 5.6.2. Running the Backend
-
-From the `backend/` directory:
+### Configuration (`.env`)
 ```bash
-cd raspberry_pi/backend
-python main.py
+GATEWAY_ID=GW01
+GATEWAY_LAN_IP=192.168.1.20
+
+# Local EMQX broker
+MQTT_BIND_IP=0.0.0.0
+MQTT_LOCAL_PORT=1883
+MQTT_LOCAL_USERNAME=gw_ingestion
+MQTT_LOCAL_PASSWORD=StrongLocalPassword123
+
+# Target Core Server (RPi 2)
+MQTT_CORE_HOST=192.168.1.5
+MQTT_CORE_PORT=8883
+MQTT_CORE_USERNAME=gw_forwarder
+MQTT_CORE_PASSWORD=StrongCorePassword456
+MQTT_CORE_CA=/app/certs/core-ca.crt
+
+# Queue & Forwarding Settings
+QUEUE_MAX_MESSAGES=50000
+FORWARD_BATCH_SIZE=10
+FORWARD_RETRY_SECONDS=5
+LOG_LEVEL=INFO
 ```
 
-## 6. Security Architecture & Access Control (NEXT PHASE, not including in this phase of Deployment DB and installation devices)
-
-### A. Authentication & RBAC
-
-* **Login Portal:** Users log in with their **email and password** via a React/Grafana web frontend backed by an authentication server (Keycloak or custom JWT middleware).
-* **Token Claims:** Successful authentication generates a **JSON Web Token (JWT)** containing user permissions:
-```json
-{
-  "sub": "user_id_123",
-  "email": "technician@etu.univ-usto.dz",
-  "role": "zone_technician",
-  "allowed_zones": ["Sector_A_Warehouse"]
-}
-
+### Starting the Gateway
+```bash
+cd raspberry_pi/gateway
+./../../scripts/setup_gateway.sh
+./../../scripts/deploy_gateway.sh
 ```
-
-
-* **MQTT Topic ACLs:** The MQTT broker enforces topic isolation. A technician assigned to *Sector A* can only subscribe to `factory/sector_a/#` and cannot access video or water sensor feeds from other zones.
-
-### B. Simulated Attack Vectors & Defensive Engineering
-
-To validate system robustness, your team should execute these simulated security drills and to make this architecture truly professional, implement and test the following security layers:
-1. **Man-in-the-Middle (MitM) Sniffing:**
-* *Simulation:* Use an SDR or Wi-Fi packet sniffer to capture unencrypted sensor packets.
-* *Defense:* Enforce **AES-128 payload encryption** at the application layer for LoRA nodes and **TLS 1.3 / MQTT over SSL (port 8883)** for Wi-Fi nodes.
-
-
-2. **Broken Object Level Authorization (BOLA):**
-* *Simulation:* Intercept dashboard API requests and alter the zone ID parameter in the JWT token to view unauthorized camera streams.
-* *Defense:* Implement strict server-side middleware validating that the user's `allowed_zones` claim matches the requested device's zone in PostgreSQL.
-
-
-3. **BLE Replay Attack:**
-* *Simulation:* Sniff BLE command packets sent to the 9g servo motor and replay them to trigger unauthorized actuation.
-* *Defense:* Implement secure BLE bonding with rotating challenge-response tokens in the ESP32 firmware.
-
-### 1. Simulated Threat: Man-in-the-Middle (MitM) / Packet Sniffing on LoRA/Wi-Fi
-
-* **Attack Simulation:** Use an SDR (Software Defined Radio) or a Wi-Fi deauthenticator tool to capture raw unencrypted packets floating between nodes.
-* **Professional Defense:**
-* Implement **AES-128 payload encryption** at the application layer for all LoRA packets.
-* Enforce **WPA3-Enterprise** or TLS-secured MQTT (MQTT over SSL/TLS on port 8883) between the gateways and the core server.
-
-
-
-### 2. Simulated Threat: Unauthorized API / Dashboard Intrusion (Broken Object Level Authorization)
-
-* **Attack Simulation:** Attempt to bypass the login portal or manipulate JWT tokens to access sensor data from restricted zones.
-* **Professional Defense:**
-* Enforce strict **RBAC claims inside signed JWT tokens**.
-* Validate topic-level permissions on the MQTT broker (`acl.conf`) so a client connected with Zone 2 credentials cannot subscribe to Zone 1 topics.
-
-
-
-### 3. Simulated Threat: Firmware Tampering / Physical Node Hijacking
-
-* **Attack Simulation:** Extract the ESP32 flash memory or intercept the serial/BLE configuration interface.
-* **Professional Defense:**
-* Enable **ESP32 Secure Boot V2** and **Flash Encryption**.
-* Require encrypted BLE pairing PINs or key exchanges before allowing the servo motor to accept motion commands.
 
 ---
 
-## 7. Developer Automation & Helper Scripts (`scripts/`)
+## 8. RPi 2 Core Setup & Operation
 
-To streamline testing, deployment, and validation without needing manual complex commands, the project includes an automated toolchain in [`scripts/`](scripts/):
+The core directory (`raspberry_pi/core/`) provides the processing, database, backend, and dashboard stack.
 
-| Script                                                   | Purpose                                                                                      | Example Usage                                                 |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`setup_env.sh`](scripts/setup_env.sh)                   | Sets up `.env`, directory structure, permissions, and Python virtual environment             | `./scripts/setup_env.sh`                                      |
-| [`docker_control.sh`](scripts/docker_control.sh)         | Controls container stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) with health polling | `./scripts/docker_control.sh start`                           |
-| [`db_manage.sh`](scripts/db_manage.sh)                   | Manages PostgreSQL & TimescaleDB migrations, seeds, verification, and `psql` shell           | `./scripts/db_manage.sh init`                                 |
-| [`simulate_telemetry.py`](scripts/simulate_telemetry.py) | Generates and publishes synthetic sensor readings over MQTT with anomaly injection           | `./scripts/simulate_telemetry.py --device G11 --interval 2.0` |
-| [`mqtt_monitor.py`](scripts/mqtt_monitor.py)             | Real-time terminal telemetry monitor subscribing to `enviromesh/#`                           | `./scripts/mqtt_monitor.py`                                   |
-| [`check_health.py`](scripts/check_health.py)             | ANSI-colored diagnostic tool displaying LAN IP and testing Nginx, API, EMQX, and TimescaleDB | `./scripts/check_health.py`                                   |
-| [`lora_packet_inject.py`](scripts/lora_packet_inject.py) | Tests the LoRa packet processing pipeline without physical SX1278 hardware                   | `./scripts/lora_packet_inject.py --device G11`                |
+### Configuration (`.env`)
+```bash
+APP_ENV=production
+LOG_LEVEL=INFO
+WEB_BIND_IP=0.0.0.0
+WEB_PORT=8080
 
-Full documentation for each script is available in [`scripts/README.md`](scripts/README.md).
+EMQX_DASHBOARD_PORT=18083
+EMQX_DASHBOARD_USERNAME=admin
+EMQX_DASHBOARD_PASSWORD=StrongAdminPassword789
+
+MQTT_APP_USERNAME=enviromesh_backend
+MQTT_APP_PASSWORD=StrongBackendPassword101
+
+POSTGRES_DB=enviromesh
+POSTGRES_USER=enviromesh_app
+POSTGRES_PASSWORD=StrongDatabasePassword202
+
+CORE_LAN_IP=192.168.1.5
+GATEWAY_LAN_IP=192.168.1.20
+```
+
+### Starting the Core
+```bash
+cd raspberry_pi/core
+./../../scripts/setup_core.sh
+# Generate certificates as described in Section 10
+./../../scripts/deploy_core.sh
+```
 
 ---
 
-## 8. Implementation Roadmap & Phase Status
+## 9. SQLite Queue Design & Resilience
 
-### Phase 1: Core Server & Database Setup (RPi) — [COMPLETED]
-- [x] Docker Compose stack definition (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`).
-- [x] Relational metadata schema (`groups`, `users`, `sensors`, `devices`, `sensor_devices`).
-- [x] TimescaleDB hypertables (`sensor_telemetry`, `raw_sensor_packets`) with optimized time/device indexes.
-- [x] Seed data provisioning: groups G1–G7, 20+ student technician accounts, and 14 device-sensor assignments.
+The persistent queue is implemented in `raspberry_pi/gateway/gateway/sqlite_queue.py`.
 
-### Phase 2: Edge Gateway & Ingestion Services (RPi) — [COMPLETED]
-- [x] Paho-MQTT subscriber daemon subscribing to `enviromesh/devices/+/telemetry` (`services/mqtt_subscriber.py`).
-- [x] Hardware SPI LoRa frame receiver for SX1278 (`services/lora_receiver.py`) with software fallback for non-RPi hosts.
-- [x] Docker container hardware device passthrough (`privileged: true`, `/dev:/dev` volume mapping) enabling native LoRa SPI inside container.
-- [x] Telemetry schema validation, compact payload mapping, and range boundary checks (`services/telemetry_validator.py`).
-- [x] Multi-threaded concurrent ingestion loop in `main.py` with ANSI colored logging (`services/colored_logger.py`).
-- [x] Reverse proxy configuration routing `/` to dashboard and `/api/` to backend (`infrastructure/nginx/default.conf`).
+### Schema
+```sql
+CREATE TABLE IF NOT EXISTS queue (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id   TEXT UNIQUE NOT NULL,
+    topic        TEXT NOT NULL,
+    payload      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_attempt TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_queue_attempts ON queue (attempts, created_at);
+```
 
-### Phase 3: Field Firmware Development (ESP32 Nodes) — [PARTIAL / IN PROGRESS]
-- [x] **Node G11 (Group 1 LoRa):** Implemented in [`firmware/nodes/node_g11/src/main.ino`](firmware/nodes/node_g11/src/main.ino) with MQ-2 LPG regression, clean-air NVS calibration, DHT11, and Ra-02 LoRa transceiver.
-- [x] **Node G41 (Group 4 LoRa):** Implemented in [`firmware/nodes/node_g41/src/main/main.ino`](firmware/nodes/node_g41/src/main/main.ino) with MQ-2, DHT11, Water sensor, and compact LoRa payload format (<250B).
-- [x] **Node G61 (Group 6 Servo & Sensors):** Implemented in [`firmware/nodes/node_g61_servo/src/main.ino`](firmware/nodes/node_g61_servo/src/main.ino) with MQ-2, DHT11, Water, PIR motion, and SG90 Micro Servo PWM control.
-- [x] **Test Nodes G42 & G43 (Wi-Fi MQTT):** Implemented in [`firmware/nodes/node_g42/`](firmware/nodes/node_g42/) and [`firmware/nodes/node_g43/`](firmware/nodes/node_g43/).
-- [x] **ESP-NOW to LoRa Dual-Radio Bridge:** Prototyped in [`my_files/esp_now_LoRa/`](my_files/esp_now_LoRa/) and [`my_files/sensor_esp_now/`](my_files/sensor_esp_now/).
-- [ ] **Node G31 (Group 3 Wi-Fi):** Finalize BMP280 barometric pressure and MQ-2 acquisition over Wi-Fi MQTT.
-
-### Phase 4: API Routes, Security Layer & Web Dashboard — [IN PROGRESS / UPCOMING]
-- [ ] Connect FastAPI routes to database:
-  - `routes/devices.py`: Query `devices` and `sensor_devices` tables.
-  - `routes/telemetry.py`: Query `sensor_telemetry` hypertable (`start`, `end`, `limit`) and latest readings.
-  - `routes/alerts.py`: Automatic threshold alerts (e.g. `gas_ppm > 2000` or `water_leak == 1`).
-  - `routes/users.py`: User profile management.
-- [ ] Implement JWT Authentication & RBAC in `backend/auth/` (email/password verification against bcrypt hashes).
-- [ ] Build interactive Web Dashboard with dynamic time-series charts (Chart.js / React) and zone filtering.
-- [ ] Configure EMQX topic ACLs (`acl.conf`) to enforce zone-scoped permissions.
-
-### Phase 5: Hardware Field Testing & Video Subsystem — [UPCOMING]
-- [ ] Deploy MediaMTX RTSP proxy on RPi for ESP32-CAM video capture.
-- [ ] Field range testing: evaluate LoRa 433 MHz link budget, RSSI, and SNR from 100m to 1km.
-- [ ] Power optimization: implement ESP32 deep-sleep cycles on battery-powered sensor nodes.
-- [ ] Systemd service provisioning for unattended gateway auto-start.
+### Durability Guarantees
+- **WAL Mode**: `PRAGMA journal_mode = WAL` allows concurrent reading and writing without database locks.
+- **Synchronous FULL**: `PRAGMA synchronous = FULL` ensures transactions are completely flushed to disk before returning, surviving abrupt power loss on the Raspberry Pi.
+- **Zero Loss Forwarding**: Rows are deleted (`mark_sent`) **only after receiving the MQTT `PUBACK` callback** from the broker.
 
 ---
 
-## 9. Quick Start Guide
+## 10. TLS Certificate Setup
 
-### Step 1: Initialize Workspace & Environment
+Inter-Pi communication requires a custom root Certificate Authority (CA) and an X.509 server certificate for RPi 2.
+
+### Step 1: Generate PKI on RPi 2
 ```bash
-# Clone the repository and run the setup script:
-./scripts/setup_env.sh
+cd raspberry_pi/core/emqx/certs
+
+# Generate CA
+openssl genrsa -out ca.key 4096
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt \
+    -subj "/C=FR/ST=IDF/L=Paris/O=EnviroMesh/CN=EnviroMesh-Root-CA"
+
+# Generate Server Key & CSR
+openssl genrsa -out server.key 2048
+openssl req -new -key server.key -out server.csr \
+    -subj "/C=FR/ST=IDF/L=Paris/O=EnviroMesh/CN=192.168.1.5"
+
+# SAN extension config
+cat > server_ext.cnf <<EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+IP.1 = 192.168.1.5
+IP.2 = 127.0.0.1
+DNS.1 = rpi2-core.local
+DNS.2 = localhost
+EOF
+
+# Sign Server Certificate
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out server.crt -days 3650 -sha256 -extfile server_ext.cnf
+
+chmod 600 ca.key server.key
+chmod 644 ca.crt server.crt
 ```
 
-### Step 2: Launch the Docker Stack
+### Step 2: Copy CA Certificate to RPi 1
 ```bash
-./scripts/docker_control.sh start
+scp raspberry_pi/core/emqx/certs/ca.crt pi@192.168.1.20:/home/pi/enviromesh/raspberry_pi/gateway/certs/core-ca.crt
 ```
-
-### Step 3: Initialize & Seed the Database
-```bash
-./scripts/db_manage.sh init
-```
-
-### Step 4: Verify Stack Health
-```bash
-./scripts/check_health.py
-```
-
-### Step 5: Simulate Telemetry & Monitor Live Stream
-Open two terminal windows:
-```bash
-# Terminal 1: Monitor live MQTT traffic
-./scripts/mqtt_monitor.py
-
-# Terminal 2: Emit simulated sensor readings
-./scripts/simulate_telemetry.py --device all --interval 1.5
-```
-
-Access the web interface at **`http://localhost:8080`** and the EMQX console at **`http://localhost:18083`** (`admin`).
 
 ---
 
-## 10. Resources & References
+## 11. EMQX Broker Configurations (RPi 1 & RPi 2)
 
-1. [IoT Architecture Visualization](https://www.kaaiot.com/iot-knowledge-base/visualizing-iot-architecture-with-diagrams)
-2. [IoT Communication Models Overview](https://www.kaaiot.com/iot-knowledge-base/iot-communication-models-overview-types-use-cases-and-implementation-strategies)
-3. [TimescaleDB Documentation](https://docs.timescale.com/)
-4. [EMQX 5 Broker Documentation](https://www.emqx.io/docs/en/latest/)
-5. [FastAPI Documentation](https://fastapi.tiangolo.com/)
-6. [Fritzing Wiring Tool](https://fritzing.org)
-7. [Diagrams.net Architecture Tool](https://app.diagrams.net/)
-8. [MQTT Tutorial for Beginners](https://www.youtube.com/watch?v=kuyCd53AOtg)
+Both Raspberry Pis run independent EMQX 5.x instances configured with deny-by-default ACL policies.
+
+### Local EMQX (RPi 1) ACL (`raspberry_pi/gateway/emqx/acl.conf`)
+```erlang
+%% Allow specific ESP32 devices to publish to their assigned topic
+{allow, {username, "g11"}, publish, ["enviromesh/devices/G11/telemetry"]}.
+{allow, {username, "g41"}, publish, ["enviromesh/devices/G41/telemetry"]}.
+{allow, {username, "g31"}, publish, ["enviromesh/devices/G31/telemetry"]}.
+{allow, {username, "g61"}, publish, ["enviromesh/devices/G61/telemetry"]}.
+
+%% Gateway ingestion service subscribes to all device topics
+{allow, {username, "gw_ingestion"}, subscribe, ["enviromesh/devices/+/telemetry"]}.
+
+%% Deny everything else
+{deny, all, all, ["#"]}.
+```
+
+### Central EMQX (RPi 2) ACL (`raspberry_pi/core/emqx/acl.conf`)
+```erlang
+%% Gateway forwarder publishes forwarded telemetry & status
+{allow, {username, "gw_forwarder"}, publish, [
+    "enviromesh/gateway/+/telemetry",
+    "enviromesh/gateway/+/status"
+]}.
+
+%% Core backend subscribes to forwarded telemetry & status
+{allow, {username, "enviromesh_backend"}, subscribe, [
+    "enviromesh/gateway/+/telemetry",
+    "enviromesh/gateway/+/status"
+]}.
+
+%% Deny everything else
+{deny, all, all, ["#"]}.
+```
+
+---
+
+## 12. Database Schema & TimescaleDB Setup
+
+Database migrations run automatically during deployment via `scripts/deploy_core.sh`.
+
+### Key Tables
+1. **`sensor_telemetry`** (TimescaleDB hypertable):
+   Contains columns: `timestamp`, `device_id`, `zone`, `metrics` (JSONB), `received_at`, `protocol`, `rssi`, `metadata` (JSONB), `message_id`, `gateway_id`, and `gateway_received_at`.
+2. **`processed_messages`** (Deduplication table):
+   Contains `message_id` (PRIMARY KEY), `device_id`, `gateway_id`, and `processed_at`. Prevents duplicate insertions into the hypertable.
+3. **`device_registry`**:
+   Metadata catalog tracking registered sensor nodes, zones, operational status, and installed firmware versions.
+
+---
+
+## 13. API & Dashboard
+
+The dashboard and API are accessed through Nginx on port `8080`:
+- **Dashboard UI**: `http://192.168.1.5:8080/`
+- **FastAPI OpenAPI Docs**: `http://192.168.1.5:8080/api/docs`
+- **Health Check**: `http://192.168.1.5:8080/api/health`
+
+### Key Endpoints
+- `GET /api/devices/`: List registered environmental nodes.
+- `GET /api/devices/{device_id}`: Detailed telemetry and metadata for a specific node.
+- `GET /api/telemetry/latest`: Latest readings across all active nodes.
+- `GET /api/groups/`: Zone groupings and regional status summaries.
+
+---
+
+## 14. ESP32 Firmware Configuration
+
+All Wi-Fi nodes must point to RPi 1 Gateway:
+```c
+// Example: firmware/nodes/node_g31/src/secrets.h
+#define WIFI_SSID        "Warehouse_IoT_2.4G"
+#define WIFI_PASSWORD    "WarehousePassword"
+#define MQTT_BROKER_HOST "192.168.1.20"  // RPi 1 Gateway IP (NEVER RPi 2)
+#define MQTT_PORT        1883
+#define MQTT_USERNAME    "g31"
+#define MQTT_PASSWORD    "DevicePasswordG31"
+```
+
+For LoRa nodes (`node_g11`, `node_g41`), verify that the RF frequency is `433E6`, sync word is `0x12`, and bandwidth is `125E3`.
+
+---
+
+## 15. Security & Hardening
+
+1. **Firewall Rules (UFW)**:
+   - On RPi 1: Allow TCP port 1883 from the LAN; keep port 18083 restricted to localhost.
+   - On RPi 2: Allow TCP port 8080 (Web) from LAN; allow port 8883 (TLS) only from RPi 1 (`192.168.1.20`).
+2. **Database Isolation**: PostgreSQL port `5432` has no host port bindings. Only containers in the internal Docker bridge network can communicate with the database.
+3. **Secret Isolation**: Real secrets are kept strictly in `.env` files with `chmod 600` and are ignored in `.gitignore`.
+
+---
+
+## 16. Deployment Procedures (Step-by-Step)
+
+### Deploying RPi 2 (Core) First
+```bash
+# 1. Clone repository
+git clone <REPO_URL> /home/pi/enviromesh && cd /home/pi/enviromesh
+
+# 2. Run core setup
+./scripts/setup_core.sh
+
+# 3. Configure passwords
+nano raspberry_pi/core/.env
+
+# 4. Generate TLS certificates (see Section 10)
+# 5. Deploy stack & apply database migrations
+./scripts/deploy_core.sh
+
+# 6. Create broker accounts
+docker exec -it enviromesh-emqx-core \
+  emqx ctl admins add gw_forwarder 'CORE_PASSWORD' 'Gateway Forwarder'
+docker exec -it enviromesh-emqx-core \
+  emqx ctl admins add enviromesh_backend 'BACKEND_PASSWORD' 'Enviromesh Backend'
+```
+
+### Deploying RPi 1 (Gateway)
+```bash
+# 1. Clone repository
+git clone <REPO_URL> /home/pi/enviromesh && cd /home/pi/enviromesh
+
+# 2. Run gateway setup
+./scripts/setup_gateway.sh
+
+# 3. Copy ca.crt from RPi 2 into raspberry_pi/gateway/certs/core-ca.crt
+scp pi@192.168.1.5:/home/pi/enviromesh/raspberry_pi/core/emqx/certs/ca.crt raspberry_pi/gateway/certs/core-ca.crt
+
+# 4. Configure environment
+nano raspberry_pi/gateway/.env
+
+# 5. Deploy gateway stack
+./scripts/deploy_gateway.sh
+
+# 6. Create local broker accounts
+docker exec -it enviromesh-emqx-local \
+  emqx ctl admins add gw_ingestion 'LOCAL_PASSWORD' 'Gateway Ingestion'
+docker exec -it enviromesh-emqx-local \
+  emqx ctl admins add g31 'G31_PASSWORD' 'Gateway G31'
+```
+
+---
+
+## 17. Health Checks & Verification
+
+EnviroMesh includes dedicated automated verification scripts:
+
+### Gateway Verification (on RPi 1)
+```bash
+python3 scripts/check_gateway_health.py
+```
+Checks:
+- Port 1883 (Local EMQX)
+- SX1278 SPI interface availability
+- SQLite queue integrity & pending count
+- RPi 2 port 8883 TLS reachability
+
+### Core Verification (on RPi 2)
+```bash
+python3 scripts/check_core_health.py
+```
+Checks:
+- Ports 8883 & 1883 on Central EMQX
+- TimescaleDB connectivity & latest ingested record
+- FastAPI `/health` endpoint
+- Nginx reverse proxy HTTP 200 response
+
+---
+
+## 18. Troubleshooting Guide
+
+| Symptom                                        | Probable Cause                                               | Diagnostic Command & Fix                                                                                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Forwarder fails: Connection Refused (8883)** | Core RPi 2 offline, firewall blocking port, or EMQX down     | Run `nc -zv 192.168.1.5 8883`. Verify RPi 2 UFW allows port 8883 from RPi 1.                                                                                    |
+| **TLS Certificate Verification Failed**        | Server IP not present in SAN list of certificate             | Inspect cert: `openssl x509 -in server.crt -text -noout`. Re-issue cert with correct IP in `server_ext.cnf`.                                                    |
+| **LoRa Receiver Exits Immediately**            | SPI interface disabled on Raspberry Pi OS                    | Run `sudo raspi-config nonint do_spi 0` and verify `/dev/spidev0.0` exists.                                                                                     |
+| **ESP32 Wi-Fi Node Cannot Connect**            | Router Wireless Client Isolation active or pointing to RPi 2 | Disable AP Client Isolation in router settings. Ensure node points to RPi 1 IP on port 1883.                                                                    |
+| **Pending Messages Accumulate in SQLite**      | Inter-Pi network link down                                   | Normal behavior! Check queue: `sqlite3 raspberry_pi/gateway/data/queue.db "SELECT count(*) FROM queue;"`. Messages will flush automatically once link restores. |
+
+---
+
+## 19. Maintenance & Operations
+
+### Database Backups
+A production backup script with automatic rotation is located at `scripts/backup_database.sh`.
+```bash
+# Run manual backup
+./scripts/backup_database.sh
+
+# Configure daily cronjob (at 02:00 UTC)
+0 2 * * * /home/pi/enviromesh/scripts/backup_database.sh >> /var/log/enviromesh_backup.log 2>&1
+```
+
+### Inspecting Gateway Queue
+```bash
+# Check undelivered packet count
+sqlite3 raspberry_pi/gateway/data/queue.db "SELECT count(*) FROM queue;"
+
+# View oldest unforwarded message
+sqlite3 raspberry_pi/gateway/data/queue.db "SELECT message_id, created_at, attempts FROM queue ORDER BY created_at ASC LIMIT 1;"
+```
+
+### Container Updates & Rolling Restarts
+```bash
+# Restart gateway services without data loss
+docker compose -f raspberry_pi/gateway/docker-compose.yml restart
+
+# Restart core services (volumes are preserved)
+docker compose -f raspberry_pi/core/docker-compose.yml restart
+```
+*(Never execute `docker compose down -v` in production environments).*

@@ -235,3 +235,28 @@ bin/
 tmp/
 certs/
 secrets.h
+
+# EnviroMesh Two-Raspberry-Pi Architecture Specifics
+# TLS Certificates & Private Keys (never commit real certificates)
+raspberry_pi/gateway/certs/*.crt
+raspberry_pi/gateway/certs/*.key
+raspberry_pi/core/emqx/certs/*.crt
+raspberry_pi/core/emqx/certs/*.key
+raspberry_pi/core/emqx/certs/*.csr
+raspberry_pi/core/emqx/certs/*.srl
+!raspberry_pi/gateway/certs/.gitkeep
+!raspberry_pi/core/emqx/certs/.gitkeep
+
+# Gateway persistent SQLite database & WAL files
+raspberry_pi/gateway/data/*.db
+raspberry_pi/gateway/data/*.db-wal
+raspberry_pi/gateway/data/*.db-shm
+!raspberry_pi/gateway/data/.gitkeep
+
+# Database backups
+raspberry_pi/core/backups/
+*.sql.gz
+
+# Environment files
+raspberry_pi/gateway/.env
+raspberry_pi/core/.env
