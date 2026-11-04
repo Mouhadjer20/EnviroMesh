@@ -54,6 +54,13 @@
     - [Database Backups](#database-backups)
     - [Inspecting Gateway Queue](#inspecting-gateway-queue)
     - [Container Updates \& Rolling Restarts](#container-updates--rolling-restarts)
+  - [20. Security Assessment Summary](#20-security-assessment-summary)
+  - [21. Security Roadmap and Future Improvements](#21-security-roadmap-and-future-improvements)
+  - [22. Security PoC Testing](#22-security-poc-testing)
+  - [23. Maintenance and Known Issues](#23-maintenance-and-known-issues)
+  - [24. Testing Results](#24-testing-results)
+  - [25. Limitations](#25-limitations)
+  - [26. Future Improvements](#26-future-improvements)
 
 ---
 
@@ -591,3 +598,145 @@ docker compose -f raspberry_pi/gateway/docker-compose.yml restart
 docker compose -f raspberry_pi/core/docker-compose.yml restart
 ```
 *(Never execute `docker compose down -v` in production environments).*
+
+---
+
+## 20. Security Assessment Summary
+
+A full security assessment is documented in [`docs/security-assessment.md`](docs/security-assessment.md).
+
+**Confirmed findings:**
+
+| ID     | Finding                                                   | Component          | Severity | Status                |
+| ------ | --------------------------------------------------------- | ------------------ | -------- | --------------------- |
+| SEC-01 | No HTTPS on dashboard (HTTP only)                         | Nginx              | High     | Future work           |
+| SEC-02 | JWT / auth routes not yet implemented                     | FastAPI            | High     | Future work           |
+| SEC-03 | LoRa packets have no HMAC/signature                       | LoRa receiver      | High     | Future work           |
+| SEC-04 | Server-authenticated TLS only (not mTLS)                  | MQTT forwarder     | Medium   | Future work           |
+| SEC-05 | EMQX device credentials not enforced at application level | EMQX ACL           | Medium   | Partially implemented |
+| SEC-06 | No API rate limiting configured                           | FastAPI / Nginx    | Medium   | Future work           |
+| SEC-07 | Backup files are unencrypted                              | backup_database.sh | Medium   | Future work           |
+| SEC-08 | MQTT forwarder uses clean_session=True                    | mqtt_forwarder.py  | Medium   | Open                  |
+| SEC-09 | SQLite file permissions rely on Docker volume             | sqlite_queue.py    | Low      | Partially implemented |
+| SEC-10 | EMQX dashboard on gateway accessible from localhost       | docker-compose.yml | Low      | Acceptable            |
+
+---
+
+## 21. Security Roadmap and Future Improvements
+
+| Security Improvement        | Component         | Current Status                                          | Planned Implementation                                         | Priority |
+| --------------------------- | ----------------- | ------------------------------------------------------- | -------------------------------------------------------------- | -------- |
+| HTTPS / TLS on Nginx        | Nginx             | Not implemented — HTTP only on port 8080                | Add self-signed or Let's Encrypt cert, update nginx config     | High     |
+| JWT authentication          | Dashboard / API   | Routes commented out                                    | Implement JWT middleware, enable users router                  | High     |
+| MQTT ACL hardening          | EMQX              | Per-device ACL configured; password enforcement partial | Enforce per-device credentials on local EMQX                   | High     |
+| LoRa message authentication | LoRa              | No cryptographic protection                             | HMAC-SHA256 on packet, counter for replay detection            | High     |
+| Replay protection           | LoRa / MQTT       | No counter or nonce                                     | Add packet counter field, reject duplicates at gateway         | High     |
+| Mutual TLS (mTLS)           | MQTT inter-Pi     | Server-auth TLS only                                    | Require client certificate from gateway forwarder              | Medium   |
+| API rate limiting           | FastAPI / Nginx   | No limits configured                                    | Add slowapi or nginx limit_req_zone                            | Medium   |
+| Security audit logging      | Core / Gateway    | Basic application logs                                  | Add structured security event log (failed auth, ACL deny)      | Medium   |
+| Backup encryption           | Database backup   | Unencrypted .sql.gz                                     | Encrypt with gpg before storing backup files                   | Medium   |
+| Certificate rotation        | MQTT TLS          | Manual process documented                               | Automate or document scheduled cert renewal                    | Medium   |
+| EMQX persistent sessions    | Gateway forwarder | clean_session=True                                      | Switch to persistent session for QoS 1 delivery during restart | Medium   |
+| SQL injection protection    | FastAPI           | SQLAlchemy ORM in use (partial)                         | Audit all raw SQL, enforce parameterized queries everywhere    | High     |
+
+---
+
+## 22. Security PoC Testing
+
+Authorized security testing PoCs are located in `security/`. See [`security/README.md`](security/README.md).
+
+**PoC Status:**
+
+| PoC                       | Category                 | Status           | Reason                                                |
+| ------------------------- | ------------------------ | ---------------- | ----------------------------------------------------- |
+| 01-mqtt-auth-poc          | MQTT unauthorized access | NOT TESTED       | Requires running EMQX instance                        |
+| 02-lora-replay-poc        | LoRa replay attack       | BLOCKED          | Requires physical SX1278 hardware                     |
+| 03-api-auth-poc           | FastAPI auth bypass      | BLOCKED          | Auth routes not yet implemented (ISSUE-001)           |
+| 04-sqlite-permissions-poc | SQLite file permissions  | NOT TESTED       | Requires physical device                              |
+| 05-network-exposure-poc   | Network port exposure    | PARTIALLY TESTED | docker compose config validated, no port 5432 exposed |
+
+All PoCs are restricted to isolated test environments. See [`security/rules-of-engagement.md`](security/rules-of-engagement.md).
+
+---
+
+## 23. Maintenance and Known Issues
+
+Full maintenance documentation: [`docs/maintenance-and-known-issues.md`](docs/maintenance-and-known-issues.md)
+
+Outstanding issues summary:
+
+| Issue ID  | Summary                                             | Severity | Status                                |
+| --------- | --------------------------------------------------- | -------- | ------------------------------------- |
+| ISSUE-001 | JWT/auth routes disabled in backend                 | High     | Open — requires implementation        |
+| ISSUE-002 | TLS certs must be manually generated                | High     | Blocked — needs physical hardware     |
+| ISSUE-003 | TimescaleDB migrations run manually                 | Medium   | Open — documented in deployment guide |
+| ISSUE-004 | Gateway SPI/GPIO cannot be tested in Docker sandbox | Medium   | Not tested — requires RPi hardware    |
+| ISSUE-005 | MQTT forwarder clean_session=True                   | Medium   | Open — pending fix                    |
+| ISSUE-006 | No HTTPS on Nginx                                   | High     | Open — future work                    |
+
+---
+
+## 24. Testing Results
+
+Test suite is in `tests/`. Run with:
+
+```bash
+# Install test dependencies
+pip install pytest paho-mqtt
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run only gateway unit tests
+python -m pytest tests/gateway/ -v
+
+# Run only integration tests
+python -m pytest tests/integration/ -v
+```
+
+**Test Status Summary:**
+
+| Test Category                             | Tests | Status       | Hardware Required           |
+| ----------------------------------------- | ----- | ------------ | --------------------------- |
+| SQLite queue — insertion, duplicate, full | 15    | ✅ PASS       | No                          |
+| Telemetry validator                       | 10    | ✅ PASS       | No                          |
+| Telemetry normalizer                      | 8     | ✅ PASS       | No                          |
+| MQTT forwarder (mocked)                   | 6     | ✅ PASS       | No                          |
+| Pipeline end-to-end simulation            | 5     | ✅ PASS       | No                          |
+| Offline buffering simulation              | 4     | ✅ PASS       | No                          |
+| Core database writer (mocked)             | 5     | ✅ PASS       | No                          |
+| LoRa SX1278 hardware reception            | —     | ⛔ NOT TESTED | Yes — SX1278 + RPi GPIO     |
+| Live EMQX TLS connection                  | —     | ⛔ NOT TESTED | Yes — running EMQX instance |
+| PostgreSQL TimescaleDB writes             | —     | ⛔ NOT TESTED | Yes — running PostgreSQL    |
+| Dashboard React build                     | —     | ⛔ NOT TESTED | Yes — Node.js environment   |
+
+---
+
+## 25. Limitations
+
+- **Physical hardware not tested**: LoRa SX1278, GPIO, SPI, real ESP32 connections require Raspberry Pi hardware.
+- **No HTTPS**: Dashboard served over HTTP. See Security Roadmap for planned fix.
+- **No JWT auth**: API authentication routes are commented out. All API endpoints are currently unauthenticated.
+- **LoRa has no cryptographic protection**: Any node with the correct frequency and spreading factor can inject packets.
+- **SQLite WAL**: Provides at-least-once delivery with QoS 1. Exactly-once is not guaranteed — deduplication on RPi 2 handles duplicates.
+- **Wi-Fi reliability**: Wi-Fi is less reliable than Ethernet for the inter-Pi link. Ethernet is preferred.
+- **TLS is server-authenticated only**: The gateway does not present a client certificate. mTLS would provide stronger assurance.
+
+---
+
+## 26. Future Improvements
+
+- Implement JWT authentication and RBAC
+- Add HTTPS with valid TLS certificate on Nginx
+- Add mutual TLS on MQTT inter-Pi link
+- Add HMAC-SHA256 packet authentication to LoRa nodes
+- Add API rate limiting (slowapi or nginx limit_req_zone)
+- Automate TLS certificate rotation
+- Encrypt database backups with GPG
+- Add Grafana dashboard alongside React dashboard
+- Implement EMQX persistent sessions on gateway forwarder
+- Add structured security audit log (SIEM integration)
+- Add Prometheus metrics endpoint to gateway and backend
+- Implement Alertmanager integration for alerts
+- Add firmware OTA update mechanism
+- Add MQTT v5 user properties for trace correlation
