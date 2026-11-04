@@ -35,6 +35,10 @@ class MqttForwarderService:
         self._running    = False
         self._connected  = False
         self._retry_delay = config.FORWARD_RETRY_SECONDS
+        # TODO(ISSUE-005): Switch to persistent session (clean_session=False) so that
+        # QoS 1 messages published while the gateway is restarting are not lost.
+        # Also set session_expiry_interval when upgrading to MQTT v5.
+        # See: docs/maintenance-and-known-issues.md ISSUE-005
         self.client       = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"gw-forwarder-{config.GATEWAY_ID}",

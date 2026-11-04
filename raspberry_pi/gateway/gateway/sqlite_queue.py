@@ -66,10 +66,17 @@ def init_db() -> None:
 def enqueue(message_id: str, topic: str, payload: str) -> bool:
     """Insert a message into the queue.
 
-    Returns True if inserted, False if the message_id already exists
-    (idempotent — safe to call on retransmitted LoRa packets).
+    Returns True if the row was **actually inserted**, False if the
+    message_id already existed (idempotent — safe on retransmitted LoRa
+    packets and MQTT re-deliveries).
 
     Raises RuntimeError if the queue is full (> QUEUE_MAX_MESSAGES).
+
+    Implementation note
+    -------------------
+    ``INSERT OR IGNORE`` never raises ``IntegrityError``; it silently skips
+    duplicate rows.  We therefore check ``cursor.rowcount`` to distinguish
+    a real insertion (rowcount == 1) from a duplicate skip (rowcount == 0).
     """
     count = pending_count()
     if count >= config.QUEUE_MAX_MESSAGES:
@@ -78,19 +85,19 @@ def enqueue(message_id: str, topic: str, payload: str) -> bool:
         )
 
     now = datetime.now(timezone.utc).isoformat()
-    try:
-        with _connect() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO queue (message_id, topic, payload, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (message_id, topic, payload, now),
-            )
-        return True
-    except sqlite3.IntegrityError:
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO queue (message_id, topic, payload, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (message_id, topic, payload, now),
+        )
+        inserted = cur.rowcount == 1
+
+    if not inserted:
         logger.debug("Duplicate enqueue ignored: %s", message_id)
-        return False
+    return inserted
 
 
 def get_batch(batch_size: int = None) -> List[sqlite3.Row]:
