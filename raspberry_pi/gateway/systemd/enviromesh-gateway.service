@@ -1,0 +1,34 @@
+# ==============================================================================
+# EnviroMesh — Gateway Stack Systemd Service (RPi 1)
+# Manages the Gateway Docker Compose container stack on boot.
+#
+# Installation on RPi 1:
+#   sudo cp raspberry_pi/gateway/systemd/enviromesh-gateway.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable enviromesh-gateway.service
+#   sudo systemctl start enviromesh-gateway.service
+# ==============================================================================
+
+[Unit]
+Description=EnviroMesh Gateway Service (RPi 1 Edge Ingestion)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/pi/enviromesh/raspberry_pi/gateway
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose restart
+TimeoutStartSec=0
+
+User=pi
+Group=docker
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
