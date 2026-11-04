@@ -1,5 +1,11 @@
 # Firmware — EnviroMesh Field Sensor Nodes
 
+> [!IMPORTANT]
+> **Two-Raspberry-Pi Architecture Requirement**:
+> All Wi-Fi ESP32 nodes (G31, G42, G43, G61) **MUST** connect to the **Gateway Raspberry Pi (RPi 1)** local EMQX broker on port 1883.
+> Under **NO circumstances** should ESP32 nodes connect directly to the Core Raspberry Pi (RPi 2).
+> All LoRa nodes (G11, G41) transmit over 433 MHz RF directly to RPi 1's SX1278 receiver.
+
 This directory contains the embedded firmware for the ESP32 field sensor nodes, actuator controllers, and communication bridges of the **EnviroMesh** platform. Each node is an independent ESP32 firmware application that acquires environmental metrics and transmits telemetry over its assigned transport protocol (**LoRa 433 MHz**, **Wi-Fi MQTT**, or **ESP-NOW**).
 
 ---
