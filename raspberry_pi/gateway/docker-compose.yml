@@ -88,9 +88,9 @@ services:
 
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     # SPI and GPIO for LoRa SX1278 hardware
-    #devices: 
-    #  - /dev/spidev0.0:/dev/spidev0.0
-    #  - /dev/gpiomem:/dev/gpiomem
+    devices:
+      - /dev/spidev0.0:/dev/spidev0.0
+      - /dev/gpiomem:/dev/gpiomem
     volumes:
       - gateway_queue:/var/lib/enviromesh
       - ./certs:/app/certs:ro

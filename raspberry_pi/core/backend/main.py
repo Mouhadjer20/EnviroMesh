@@ -39,6 +39,9 @@ app = FastAPI(
 app.include_router(devices.router)
 app.include_router(telemetry.router)
 app.include_router(groups.router)
+# TODO(ISSUE-001): Implement JWT authentication and enable alerts + users routers.
+# All API endpoints are currently unauthenticated.
+# See: docs/maintenance-and-known-issues.md ISSUE-001
 # app.include_router(alerts.router)  # Phase 4
 # app.include_router(users.router)   # Phase 4
 
