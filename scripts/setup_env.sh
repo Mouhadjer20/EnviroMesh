@@ -62,9 +62,9 @@ fi
 
 # 3. Create missing directories if needed
 echo -e "\n${YELLOW}[3/5] Verifying directory structure...${NC}"
-mkdir -p infrastructure/emqx infrastructure/nginx infrastructure/systemd
-mkdir -p raspberry_pi/backend/services raspberry_pi/backend/routes raspberry_pi/backend/auth
-mkdir -p raspberry_pi/dashboard raspberry_pi/db/migration raspberry_pi/db/seed
+mkdir -p raspberry_pi/gateway/certs raspberry_pi/gateway/data raspberry_pi/gateway/emqx raspberry_pi/gateway/systemd
+mkdir -p raspberry_pi/core/backend/services raspberry_pi/core/backend/routes raspberry_pi/core/backend/auth
+mkdir -p raspberry_pi/core/dashboard raspberry_pi/core/database/migrations raspberry_pi/core/database/seeds raspberry_pi/core/systemd raspberry_pi/core/emqx/certs
 mkdir -p firmware/nodes/node_g11/src firmware/nodes/node_g41/src/main firmware/nodes/node_g31/src firmware/nodes/node_g61_servo/src
 echo -e "  ✔ Directory structure verified."
 
@@ -91,16 +91,16 @@ if [ -f ".venv/bin/activate" ]; then
     # shellcheck disable=SC1091
     source .venv/bin/activate
     pip install --quiet --upgrade pip || true
-    if [ -f "raspberry_pi/backend/requirements.txt" ]; then
-        if pip install -r raspberry_pi/backend/requirements.txt; then
-            echo -e "  ✔ Installed core requirements from raspberry_pi/backend/requirements.txt"
-        else
-            echo -e "  ${YELLOW}Warning: Could not install core dependencies in .venv.${NC}"
+    if [ -f "raspberry_pi/core/backend/requirements.txt" ]; then
+        if pip install -r raspberry_pi/core/backend/requirements.txt; then
+            echo -e "  ✔ Installed core requirements from raspberry_pi/core/backend/requirements.txt"
+        elif [ -f "raspberry_pi/backend/requirements.txt" ]; then
+            pip install -r raspberry_pi/backend/requirements.txt || true
         fi
     fi
     # Optional hardware dependencies for LoRa SX1278 (on Linux / RPi)
-    if [ -f "raspberry_pi/backend/requirements-hardware.txt" ] && [ "$(uname -s)" = "Linux" ]; then
-        pip install -r raspberry_pi/backend/requirements-hardware.txt 2>/dev/null && \
+    if [ -f "raspberry_pi/core/backend/requirements-hardware.txt" ] && [ "$(uname -s)" = "Linux" ]; then
+        pip install -r raspberry_pi/core/backend/requirements-hardware.txt 2>/dev/null && \
             echo -e "  ✔ Installed LoRa hardware drivers (spidev/RPi.GPIO)" || true
     fi
     deactivate || true

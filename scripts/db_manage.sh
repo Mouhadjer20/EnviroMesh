@@ -114,22 +114,34 @@ cmd_migrate() {
     run_sql_query "CREATE EXTENSION IF NOT EXISTS timescaledb;"
 
     echo -e "\n${BLUE}=== Applying Relational Schema (Registry) ===${NC}"
-    run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_registry.sql" "Registry Migration"
-
-    echo -e "\n${BLUE}=== Applying Time-Series Schema (Telemetry) ===${NC}"
-    run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_telemetry.sql" "Telemetry Migration"
+    if [ -f "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/001_create_registry.sql" ]; then
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/001_create_registry.sql" "Registry Migration"
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/001_create_telemetry.sql" "Telemetry Migration"
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/003_add_gateway_metadata.sql" "Gateway Metadata & Dedup Migration"
+    else
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_registry.sql" "Registry Migration"
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_telemetry.sql" "Telemetry Migration"
+    fi
 }
 
 cmd_seed() {
     check_connection
     echo -e "\n${BLUE}=== Seeding Reference Data ===${NC}"
-    run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/seed/001_seed_registry.sql" "Seed Registry Data"
+    if [ -f "${PROJECT_ROOT}/raspberry_pi/core/database/seeds/001_seed_registry.sql" ]; then
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/seeds/001_seed_registry.sql" "Seed Registry Data"
+    else
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/seed/001_seed_registry.sql" "Seed Registry Data"
+    fi
 }
 
 cmd_verify() {
     check_connection
     echo -e "\n${BLUE}=== Running Seed Verification Queries ===${NC}"
-    run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/seed/001_verify_seed_registry.sql" "Verification Query Suite"
+    if [ -f "${PROJECT_ROOT}/raspberry_pi/core/database/seeds/001_verify_seed_registry.sql" ]; then
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/seeds/001_verify_seed_registry.sql" "Verification Query Suite"
+    else
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/seed/001_verify_seed_registry.sql" "Verification Query Suite"
+    fi
 }
 
 cmd_status() {

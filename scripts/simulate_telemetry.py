@@ -36,7 +36,9 @@ try:
 except ImportError:
     mqtt = None
 
-BACKEND_DIR = ROOT_DIR / "raspberry_pi" / "backend"
+BACKEND_DIR = ROOT_DIR / "raspberry_pi" / "core" / "backend"
+if not BACKEND_DIR.exists():
+    BACKEND_DIR = ROOT_DIR / "raspberry_pi" / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 try:

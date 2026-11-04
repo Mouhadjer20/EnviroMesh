@@ -44,7 +44,7 @@ Run this script first when cloning the repository or setting up a new developmen
 - Verifies system prerequisites (`docker`, `python3`, `git`).
 - Creates `.env` from `.env.example` if it does not exist.
 - Sets executable permissions on all scripts in `scripts/`.
-- Prepares directories for infrastructure, backend, dashboard, and firmware.
+- Prepares directories for gateway, core, and firmware.
 - Creates and sets up Python virtual environment (`.venv`) with core and optional hardware dependencies.
 
 ---
