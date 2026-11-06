@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
-import { API, POLL_MS } from '../lib.js'
+import { POLL_MS } from '../lib.js'
+import { apiRequest } from '../api.js'
 
 export function useApi(path, every = POLL_MS, select = x => x) {
   const [s, setS] = useState({ data: null, error: '', loading: true })
   useEffect(() => {
-    if (!path) return
+    if (!path) {
+      setS({ data: null, error: '', loading: false })
+      return
+    }
     let stop = false
+    setS({ data: null, error: '', loading: true })
     const go = async () => {
       try {
-        const r = await fetch(API + path, { cache: 'no-store' })
-        if (!r.ok) throw new Error(`Erreur API (${r.status}) sur ${path}`)
-        const d = select(await r.json())
+        const d = select(await apiRequest(path))
         if (!stop) setS({ data: d, error: '', loading: false })
       } catch (e) { if (!stop) setS(p => ({ ...p, error: e.message || 'API indisponible', loading: false })) }
     }

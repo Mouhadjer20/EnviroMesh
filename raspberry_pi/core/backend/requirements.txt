@@ -3,6 +3,7 @@
 # ASGI framework and server
 fastapi==0.110.1
 uvicorn[standard]==0.27.1
+PyJWT==2.10.1
 
 # MQTT client for consuming telemetry from EMQX
 paho-mqtt==2.1.0

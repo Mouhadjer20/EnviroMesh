@@ -40,11 +40,16 @@ def _query(sql, params=None, what="data"):
         raise HTTPException(status_code=503, detail="Database unavailable")
 
 
-def list_groups():
-    return _query("SELECT group_code, description FROM groups ORDER BY group_code", what="groups")
+def list_groups(group_code=None):
+    return _query(
+        "SELECT group_code, description FROM groups "
+        "WHERE (%(group_code)s::text IS NULL OR group_code = %(group_code)s) ORDER BY group_code",
+        {"group_code": group_code},
+        what="groups",
+    )
 
 
-def list_devices(device_id=None):
+def list_devices(device_id=None, group_code=None):
     return _query(
         """
         SELECT d.device_id, d.zone, d.latitude, d.longitude, g.group_code,
@@ -58,10 +63,11 @@ def list_devices(device_id=None):
         LEFT JOIN sensor_devices sd ON sd.device_id = d.device_id
         LEFT JOIN sensors s ON s.id = sd.sensor_id
         WHERE (%(device_id)s::text IS NULL OR d.device_id = %(device_id)s)
+          AND (%(group_code)s::text IS NULL OR g.group_code = %(group_code)s)
         GROUP BY d.device_id, g.group_code
         ORDER BY d.device_id
         """,
-        {"device_id": device_id},
+        {"device_id": device_id, "group_code": group_code},
         what="device inventory",
     )
 
@@ -76,30 +82,32 @@ _TELEMETRY = """
 """
 
 
-def list_telemetry(device_id=None, start=None, end=None, limit=100):
+def list_telemetry(device_id=None, start=None, end=None, limit=100, group_code=None):
     return _query(
         _TELEMETRY
         + """
         WHERE (%(device_id)s::text IS NULL OR t.device_id = %(device_id)s)
           AND (%(start)s::timestamptz IS NULL OR t.timestamp >= %(start)s)
           AND (%(end)s::timestamptz IS NULL OR t.timestamp <= %(end)s)
+          AND (%(group_code)s::text IS NULL OR g.group_code = %(group_code)s)
         ORDER BY t.timestamp DESC
         LIMIT %(limit)s
         """,
-        {"device_id": device_id, "start": start, "end": end, "limit": limit},
+        {"device_id": device_id, "start": start, "end": end, "limit": limit, "group_code": group_code},
         what="telemetry",
     )
 
 
-def latest_telemetry(device_id=None):
+def latest_telemetry(device_id=None, group_code=None):
     """Dernière mesure de chaque nœud (ou d'un seul nœud)."""
     sql = _TELEMETRY.replace("SELECT t.timestamp", "SELECT DISTINCT ON (t.device_id) t.timestamp", 1)
     return _query(
         sql
         + """
         WHERE (%(device_id)s::text IS NULL OR t.device_id = %(device_id)s)
+          AND (%(group_code)s::text IS NULL OR g.group_code = %(group_code)s)
         ORDER BY t.device_id, t.timestamp DESC
         """,
-        {"device_id": device_id},
+        {"device_id": device_id, "group_code": group_code},
         what="latest telemetry",
     )
