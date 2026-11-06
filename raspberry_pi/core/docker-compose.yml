@@ -114,6 +114,10 @@ services:
       DB_USER: "${POSTGRES_USER}"
       DB_PASSWORD: "${POSTGRES_PASSWORD}"
 
+      AUTH_REQUIRED: "${AUTH_REQUIRED:-true}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      JWT_EXPIRE_MINUTES: "${JWT_EXPIRE_MINUTES:-60}"
+
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       TZ: UTC
     expose:

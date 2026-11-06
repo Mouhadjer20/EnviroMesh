@@ -132,21 +132,21 @@ Add `limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;` to the Nginx `
 
 ---
 
-### FIND-005 — JWT Authentication Not Implemented
+### FIND-005 — JWT Authentication and Group Authorization
 
 | Field | Value |
 |---|---|
 | **Severity** | HIGH |
-| **Evidence** | `raspberry_pi/core/backend/main.py` lines 42–43: `# app.include_router(users.router)` and `# app.include_router(alerts.router)` |
-| **Status** | **Open (ISSUE-001)** |
+| **Evidence** | `raspberry_pi/core/backend/services/auth.py`, the authenticated device/telemetry/group routes, and `raspberry_pi/core/backend/main.py` |
+| **Status** | **Implemented on feature/user-management; deployment verification required** |
 
 **Impact:**  
-All API endpoints (`/api/devices/`, `/api/telemetry/`, `/api/groups/`, WebSocket `/ws/`) are publicly accessible with no authentication. Any host that can reach port 8080 on RPi 2 has full read access to the system.
+The prior implementation exposed device and telemetry API routes without authentication. The feature branch now adds JWT authentication, database-backed account checks, administrator-only account/group mutation, and SQL-level group restrictions for device and telemetry reads. This is not yet a production deployment: migrations 004/005, a persistent JWT secret, and initial administrator bootstrap must be applied and the deployed API must be verified before closing this finding. The WebSocket endpoint and TLS remain separate scope.
 
 **Remediation:**  
-Implement `python-jose` JWT token issuance in `routes/users.py`. Add `OAuth2PasswordBearer` dependency to protected routes. Re-enable the users router.
+Deploy the implementation from `feature/user-management`, run migrations 004/005, set a persistent random `JWT_SECRET`, bootstrap the first admin interactively, and verify 401/403 responses plus cross-group data isolation. Add TLS before using the dashboard across an untrusted network.
 
-**Status: Open** — routes exist but are disabled (Phase 4 work).
+**Status: Mitigated in feature branch; deployment verification required.**
 
 ---
 

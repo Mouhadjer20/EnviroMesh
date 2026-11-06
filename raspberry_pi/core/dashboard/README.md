@@ -101,7 +101,9 @@ raspberry_pi/dashboard/
 | Dark / Light / Auto theme toggle (persisted in localStorage) | ✅ Done |
 | Zone and group filters | ✅ Done |
 | API connection status indicator | ✅ Done |
-| Login / JWT authentication | 🔲 Planned (Phase 4) |
+| Login / JWT authentication and forced initial password rotation | ✅ Implemented (requires migrations + bootstrap admin) |
+| Role-scoped navigation, admin user management, group/device assignment | ✅ Implemented (group scope enforced by the API) |
+| Profile details and password change | ✅ Implemented |
 | WebSocket live telemetry (`/ws/telemetry`) | 🔲 Planned (Phase 4) |
 | Actuator control panel (Node G61 servo) | 🔲 Planned (Phase 4) |
 | HLS / WebRTC video stream (ESP32-CAM) | 🔲 Planned (Phase 5) |
@@ -183,10 +185,11 @@ npm run preview     # preview the built bundle at http://localhost:4173
 
 ## 6. Known Limitations & Roadmap
 
-- **No authentication:** The sidebar footer displays *"Authentification non configurée"*. JWT login is planned for Phase 4.
+- **Initial setup required:** Apply migrations 004 and 005, configure a persistent `JWT_SECRET`, and create the first administrator with `python -m services.bootstrap_admin`.
+- **Browser token storage:** The bearer token is kept in `sessionStorage` and sent to the API. Use HTTPS on networks that are not fully trusted; the current reverse proxy is HTTP-only.
 - **Alert history is reconstructed client-side** from the last 2 000 telemetry readings. A dedicated `alerts` table and backend endpoint are planned.
 - **Live surveillance** (`/ws/telemetry` WebSocket) is shown as *À venir* in the sidebar.
-- **Actuators, Zones, Analytics, Users, Security, Settings** pages are stubs shown as *À venir*.
+- **Actuators, dedicated Zones, Analytics, and Security pages** remain planned. Users, Groups, and Settings are implemented.
 - **`smoke_detected`** is in the validator `METRIC_RANGES` but not in `METRIC_RANGES` on the frontend `lib.js` — no danger threshold is set for it (binary flag only).
 
 ---

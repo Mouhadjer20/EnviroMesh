@@ -11,7 +11,7 @@
 
 | Issue ID | Component | Severity | Error / Symptom | Root Cause | Affected File | Required Modification | Fix Implemented | Verification | Manual Action | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **ISSUE-001** | FastAPI Core Backend | High | Authentication routes disabled; all endpoints unauthenticated | JWT auth logic not finished in prototype | `raspberry_pi/core/backend/main.py` | Implement JWT token verification middleware; uncomment `users` & `alerts` routers | No | Code review | Implement OAuth2/JWT and re-enable routers | Open |
+| **ISSUE-001** | FastAPI Core Backend | High | Authentication routes disabled; all endpoints unauthenticated | JWT auth logic not finished in prototype | `raspberry_pi/core/backend/main.py` | Implement JWT verification and scope data queries to the signed-in user's group | Implemented on `feature/user-management`; users/auth routers enabled, group-scoped device/telemetry queries, initial admin bootstrap and password rotation added | Build + API integration tests pending | Apply migrations 004/005, configure `JWT_SECRET`, bootstrap an admin, and deploy | Mitigated in branch; deployment verification required |
 | **ISSUE-002** | Gateway & Core TLS | High | Forwarder fails to connect to port 8883 with SSL error | TLS CA / Server certificates not generated yet | `raspberry_pi/core/emqx/certs/` & `raspberry_pi/gateway/certs/core-ca.crt` | Generate self-signed CA and server certificates matching `CORE_LAN_IP` SAN | No | `scripts/check_gateway_health.py` | Run OpenSSL cert generation on RPi 2 and copy `ca.crt` to RPi 1 | Blocked (Requires hardware) |
 | **ISSUE-003** | Core Database | Medium | Missing tables or columns on fresh deployment | TimescaleDB migrations must be applied manually | `raspberry_pi/core/database/migrations/` | Run `psql` command to apply migrations `001` and `003` | Documented in deployment guide | Database inspection | Execute migration SQL script via `deploy_core.sh` | Open |
 | **ISSUE-004** | Gateway LoRa Receiver | Medium | LoRa receiver exits with SPI opening error in simulated container | SPI hardware device `/dev/spidev0.0` missing in container | `raspberry_pi/gateway/gateway/lora_receiver.py` | Add fallback / mock mode when SPI is absent; verify device on Pi OS | Documented | `py_compile` | Enable SPI interface via `raspi-config` on Raspberry Pi 1 | Not Tested (Requires hardware) |
@@ -144,4 +144,3 @@ rm /tmp/restore.sql
    - Forwarder establishes TLS connection to RPi 2 port 8883.
    - Forwarder drains the SQLite queue batch by batch.
    - Deduplication table `processed_messages` on RPi 2 safely ignores any duplicate messages forwarded during the transition.
-

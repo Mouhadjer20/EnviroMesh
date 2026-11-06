@@ -1,4 +1,4 @@
--- =========================================================
+-- ==============password123===========================================
 -- SEED DATA: ENVIRONMENTAL MONITORING SYSTEM
 -- Tables: groups, students, sensors, devices, sensor_devices
 -- Default password: password123

@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from services.mqtt_subscriber import MqttSubscriber
-from routes import devices, telemetry, alerts, users, groups
+from routes import auth, devices, telemetry, users, groups
 from services.colored_logger import setup_colored_logging
 
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
@@ -39,11 +39,8 @@ app = FastAPI(
 app.include_router(devices.router)
 app.include_router(telemetry.router)
 app.include_router(groups.router)
-# TODO(ISSUE-001): Implement JWT authentication and enable alerts + users routers.
-# All API endpoints are currently unauthenticated.
-# See: docs/maintenance-and-known-issues.md ISSUE-001
-# app.include_router(alerts.router)  # Phase 4
-# app.include_router(users.router)   # Phase 4
+app.include_router(auth.router)
+app.include_router(users.router)
 
 
 @app.get("/health", tags=["health"])
@@ -100,4 +97,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -53,13 +53,22 @@ raspberry_pi/core/
    ```bash
    docker compose up -d --build
    ```
-4. **Run Database Migrations**:
+4. **Run Database Migrations** (including the user security migrations):
    ```bash
-   docker compose exec timescaledb psql -U enviromesh_app -d enviromesh \
-       -f /migrations/001_create_registry.sql \
-       -f /migrations/001_create_telemetry.sql \
-       -f /migrations/003_add_gateway_metadata.sql
+   docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/001_create_registry.sql'
+   docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/001_create_telemetry.sql'
+   docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/003_add_gateway_metadata.sql'
+   docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/004_add_active_user.sql'
+   docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/005_require_password_rotation.sql'
    ```
-5. **Access the Dashboard**:
-   Open your browser to `http://<CORE_RPi_IP>:8080`.
+   Apply each migration once, in order, and run any registry seed scripts after the schema migrations.
+5. **Create the first administrator** (after applying migrations and starting the backend):
+   ```bash
+   docker compose exec backend python -m services.bootstrap_admin
+   ```
+   The command prompts for the administrator details and a 12+ character password. It refuses to create another administrator once an active administrator exists.
+6. **Set a persistent JWT secret** in `.env` before deployment. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"` and set `JWT_SECRET` to the result. A missing secret is generated at startup and invalidates sessions on restart.
+7. **Access the Dashboard**:
+   Open your browser to `http://<CORE_RPi_IP>:8080` and sign in with the administrator account.
 
+Administrators can create groups, assign devices, create users, assign each technician to one group, deactivate accounts, and reset temporary passwords. Technicians' device and telemetry queries are restricted in SQL to their assigned group. Seed accounts created with the published demo password are required to change it before accessing dashboard data. Profile details and password changes are available under Settings.
