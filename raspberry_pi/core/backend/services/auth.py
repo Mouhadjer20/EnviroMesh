@@ -13,7 +13,58 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
-import jwt
+try:
+    import jwt
+except ImportError:
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    class _FallbackJWT:
+        """Lightweight HS256 JWT fallback when PyJWT is not installed."""
+        class PyJWTError(Exception):
+            pass
+
+        @staticmethod
+        def _b64e(b: bytes) -> str:
+            return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
+
+        @staticmethod
+        def _b64d(s: str) -> bytes:
+            s += "=" * ((4 - len(s) % 4) % 4)
+            return base64.urlsafe_b64decode(s.encode("ascii"))
+
+        @classmethod
+        def encode(cls, payload: dict, key: str, algorithm: str = "HS256") -> str:
+            header = {"alg": "HS256", "typ": "JWT"}
+            h_str = cls._b64e(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+            p = {}
+            for k, v in payload.items():
+                if hasattr(v, "timestamp"):
+                    p[k] = int(v.timestamp())
+                else:
+                    p[k] = v
+            p_str = cls._b64e(json.dumps(p, separators=(",", ":")).encode("utf-8"))
+            sig = hmac.new(key.encode("utf-8"), f"{h_str}.{p_str}".encode("utf-8"), hashlib.sha256).digest()
+            return f"{h_str}.{p_str}.{cls._b64e(sig)}"
+
+        @classmethod
+        def decode(cls, token: str, key: str, algorithms: list = None) -> dict:
+            parts = token.split(".")
+            if len(parts) != 3:
+                raise cls.PyJWTError("Invalid token format")
+            h_str, p_str, sig_str = parts
+            expected = hmac.new(key.encode("utf-8"), f"{h_str}.{p_str}".encode("utf-8"), hashlib.sha256).digest()
+            if not hmac.compare_digest(cls._b64d(sig_str), expected):
+                raise cls.PyJWTError("Signature verification failed")
+            claims = json.loads(cls._b64d(p_str).decode("utf-8"))
+            if "exp" in claims and claims["exp"] < time.time():
+                raise cls.PyJWTError("Token has expired")
+            return claims
+
+    jwt = _FallbackJWT
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 

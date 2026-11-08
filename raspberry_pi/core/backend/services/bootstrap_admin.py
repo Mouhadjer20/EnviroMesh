@@ -3,6 +3,11 @@
 import getpass
 import re
 import sys
+import os
+
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 from services.database_access import _connect
 
