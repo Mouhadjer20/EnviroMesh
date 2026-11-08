@@ -61,6 +61,11 @@ class MqttForwarderService:
         self.client.on_publish    = self._on_publish
 
     def _configure_tls(self) -> None:
+        use_tls = getattr(config, "MQTT_CORE_USE_TLS", True)
+        if not use_tls or config.MQTT_CORE_PORT == 1883:
+            logger.info("Core MQTT TLS disabled (plain connection mode on port %d)", config.MQTT_CORE_PORT)
+            return
+
         try:
             self.client.tls_set(
                 ca_certs   = config.MQTT_CORE_CA,
@@ -72,7 +77,7 @@ class MqttForwarderService:
         except (FileNotFoundError, ssl.SSLError) as exc:
             logger.error(
                 "TLS configuration failed: %s. "
-                "Copy ca.crt to %s before starting the forwarder.",
+                "Copy ca.crt to %s before starting the forwarder (or set MQTT_CORE_USE_TLS=false for local testing).",
                 exc, config.MQTT_CORE_CA,
             )
             raise

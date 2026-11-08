@@ -22,10 +22,11 @@ MQTT_LOCAL_USERNAME: str = os.getenv("MQTT_LOCAL_USERNAME", "gw_ingestion")
 MQTT_LOCAL_PASSWORD: str = os.getenv("MQTT_LOCAL_PASSWORD", "")
 
 # ---------------------------------------------------------------------------
-# Core EMQX broker (on RPi 2) — TLS mandatory
+# Core EMQX broker (on RPi 2) — TLS enabled by default on port 8883
 # ---------------------------------------------------------------------------
 MQTT_CORE_HOST: str = os.getenv("MQTT_CORE_HOST", "192.168.1.5")
 MQTT_CORE_PORT: int = int(os.getenv("MQTT_CORE_PORT", "8883"))
+MQTT_CORE_USE_TLS: bool = os.getenv("MQTT_CORE_USE_TLS", "true").lower() in ("true", "1", "yes")
 MQTT_CORE_USERNAME: str = os.getenv("MQTT_CORE_USERNAME", "gw_forwarder")
 MQTT_CORE_PASSWORD: str = os.getenv("MQTT_CORE_PASSWORD", "")
 # Path to the CA certificate that signed the core EMQX server certificate
