@@ -51,13 +51,13 @@ WITH
                 'UN31032025222238324820',
                 'ALEM',
                 'HALIMA',
-                2
+                6
             ),
             (
                 'UN31032025222237427010',
                 'BENAINI',
                 'MEROUA',
-                2
+                6
             ),
             (
                 'UN31032025222238125604',
@@ -180,6 +180,25 @@ LEFT JOIN groups AS g
     ON g.group_code = 'G' || s.group_number::TEXT
 ON CONFLICT (email) DO NOTHING;
 
+-- 4. Insert default system administrator
+INSERT INTO users (
+    first_name,
+    last_name,
+    email,
+    password,
+    role,
+    active,
+    password_change_required
+) VALUES (
+    'Admin',
+    'EnviroMesh',
+    'admin@enviromesh.local',
+    crypt('Admin12345678!', gen_salt('bf', 12)),
+    'admin',
+    TRUE,
+    FALSE
+) ON CONFLICT (email) DO NOTHING;
+
 COMMIT;
 
 -- =========================================================
@@ -281,6 +300,13 @@ FROM (
             'G3'
         ),
         (
+            'G51',
+            'Sector_B_Storage',
+            NULL::DOUBLE PRECISION,
+            NULL::DOUBLE PRECISION,
+            'G5'
+        ),
+        (
             'G61',
             'Sector_A_Valve',
             NULL::DOUBLE PRECISION,
@@ -347,6 +373,20 @@ assignments (device_id, sensor_name, configuration) AS (
         ),
         (
             'G31', 'Water Sensor',
+            '{"measurement": "water_leak_detected"}'::JSONB
+        ),
+
+-- G5: ESP32 Hub Node
+(
+            'G51', 'MQ-2',
+            '{"measurement": "gas_and_smoke"}'::JSONB
+        ),
+        (
+            'G51', 'DHT11',
+            '{"measurements": ["temperature_c", "humidity_pct"]}'::JSONB
+        ),
+        (
+            'G51', 'Water Sensor',
             '{"measurement": "water_leak_detected"}'::JSONB
         ),
 

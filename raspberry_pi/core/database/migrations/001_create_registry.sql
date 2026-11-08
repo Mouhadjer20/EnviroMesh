@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS users (
     password VARCHAR(255) NOT NULL,
     group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
     role VARCHAR(30) NOT NULL DEFAULT 'zone_technician',
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    password_change_required BOOLEAN NOT NULL DEFAULT FALSE,
 
     CONSTRAINT chk_user_role
         CHECK (role IN ('admin', 'zone_technician'))
