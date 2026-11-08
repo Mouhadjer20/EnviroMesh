@@ -1,26 +1,69 @@
+## ==============================================================================
+## EnviroMesh — Unified Single-Device Docker Compose Stack
+##
+## Runs BOTH RPi 1 Gateway and RPi 2 Core on the SAME machine for:
+## - Local development and simulation without hardware
+## - Single-host production or edge lab deployments
+## - End-to-end integration testing and pipeline validation
+##
+## Data Flow on this device:
+##   ESP32 Nodes / Simulator (port 1883)
+##       │
+##       ▼
+##   emqx-local (Gateway Ingestion Broker on :1883)
+##       │
+##       ▼
+##   gateway (Ingestion, Normalization, SQLite WAL queue, TLS Forwarder)
+##       │
+##       ▼
+##   emqx-core (Core Central Broker on :8883 / :1884 debug)
+##       │
+##       ▼
+##   backend (FastAPI REST / WebSocket, MQTT Subscriber, DB Writer)
+##       │
+##       ▼
+##   timescaledb (PostgreSQL 16 + TimescaleDB 2.17)
+##       │
+##       ▼
+##   nginx (:8080) -> Reverse Proxy routing /api -> backend, / -> dashboard
+##
+## Usage:
+##   cp .env.example .env && nano .env
+##   docker compose up -d
+## ==============================================================================
+
 name: enviromesh
 
 services:
-  # MQTT broker for Wi-Fi ESP32 nodes and the LoRa gateway process
-  emqx:
+
+  # ----------------------------------------------------------------------------
+  # RPi 1 GATEWAY SERVICES
+  # ----------------------------------------------------------------------------
+
+  # Local EMQX broker: Receives Wi-Fi ESP32 telemetry & simulated data
+  emqx-local:
     image: emqx/emqx:5.8.8
-    container_name: enviromesh-emqx
-    hostname: emqx
+    container_name: enviromesh-emqx-local
+    hostname: emqx-local
     restart: unless-stopped
     environment:
-      EMQX_NODE_NAME: emqx@127.0.0.1
-      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME}
-      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+      EMQX_NODE_NAME: "emqx@127.0.0.1"
+      EMQX_NODE__COOKIE: "${EMQX_LOCAL_NODE_COOKIE:-enviromesh_secret_cookie_local}"
+      EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_LOCAL_DASHBOARD_USERNAME:-admin}"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_LOCAL_DASHBOARD_PASSWORD:-admin123}"
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
     ports:
-      # MQTT listener — accessible from any network the RPi is connected to
-      - "${MQTT_BIND_IP:-0.0.0.0}:${MQTT_PORT:-1883}:1883"
-      # EMQX dashboard — accessible from the same LAN subnet as the RPi
-      # Set EMQX_DASHBOARD_BIND_IP=127.0.0.1 in .env to restrict to localhost only
-      - "${EMQX_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_DASHBOARD_PORT:-18083}:18083"
+      # Standard MQTT port (1883) — ESP32 nodes & simulator connect here
+      - "${MQTT_LOCAL_BIND_IP:-0.0.0.0}:${MQTT_LOCAL_PORT:-1883}:1883"
+      # Local EMQX dashboard (18083)
+      - "${EMQX_LOCAL_DASHBOARD_BIND_IP:-127.0.0.1}:${EMQX_LOCAL_DASHBOARD_PORT:-18083}:18083"
     volumes:
-      - emqx_data:/opt/emqx/data
-      - emqx_log:/opt/emqx/log
-      - ./raspberry_pi/core/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - emqx_local_data:/opt/emqx/data
+      - emqx_local_log:/opt/emqx/log
+      - ./raspberry_pi/gateway/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./raspberry_pi/gateway/emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./raspberry_pi/gateway/emqx/users.json:/opt/emqx/etc/users.json:ro
     healthcheck:
       test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
       interval: 30s
@@ -30,25 +73,113 @@ services:
     networks:
       - enviromesh
 
-  # PostgreSQL database with TimescaleDB extension
+  # Gateway edge processing service (LoRa receiver, Wi-Fi ingestion, SQLite queue, forwarder)
+  gateway:
+    build:
+      context: ./raspberry_pi/gateway
+      dockerfile: Dockerfile
+    container_name: enviromesh-gateway
+    restart: unless-stopped
+    depends_on:
+      emqx-local:
+        condition: service_healthy
+      emqx-core:
+        condition: service_healthy
+    environment:
+      GATEWAY_ID: "${GATEWAY_ID:-GW01}"
+      GATEWAY_LAN_IP: "${GATEWAY_LAN_IP:-127.0.0.1}"
+
+      # Local EMQX connection (on Docker network)
+      MQTT_LOCAL_HOST: "emqx-local"
+      MQTT_LOCAL_PORT: "1883"
+      MQTT_LOCAL_USERNAME: "${MQTT_LOCAL_USERNAME:-gw_ingestion}"
+      MQTT_LOCAL_PASSWORD: "${MQTT_LOCAL_PASSWORD:-gw_ingest_secret}"
+
+      # Core EMQX forwarding (on Docker network)
+      MQTT_CORE_HOST: "emqx-core"
+      MQTT_CORE_PORT: "${MQTT_CORE_PORT:-1883}"
+      MQTT_CORE_USE_TLS: "${MQTT_CORE_USE_TLS:-false}"
+      MQTT_CORE_USERNAME: "${MQTT_CORE_USERNAME:-gw_forwarder}"
+      MQTT_CORE_PASSWORD: "${MQTT_CORE_PASSWORD:-gw_forward_secret}"
+      MQTT_CORE_CA: "/app/certs/core-ca.crt"
+
+      MQTT_INPUT_TOPIC: "enviromesh/devices/+/telemetry"
+      MQTT_OUTPUT_TOPIC: "enviromesh/gateway/${GATEWAY_ID:-GW01}/telemetry"
+      MQTT_STATUS_TOPIC: "enviromesh/gateway/${GATEWAY_ID:-GW01}/status"
+      MQTT_QOS: "1"
+
+      SQLITE_PATH: "/var/lib/enviromesh/queue.db"
+      QUEUE_MAX_MESSAGES: "${QUEUE_MAX_MESSAGES:-50000}"
+      FORWARD_BATCH_SIZE: "${FORWARD_BATCH_SIZE:-10}"
+      FORWARD_RETRY_SECONDS: "${FORWARD_RETRY_SECONDS:-5}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    # Optional hardware passthrough (uncomment if running on a real RPi with SX1278 SPI wiring)
+    # devices:
+    #   - /dev/spidev0.0:/dev/spidev0.0
+    #   - /dev/gpiomem:/dev/gpiomem
+    volumes:
+      - gateway_queue:/var/lib/enviromesh
+      - ./raspberry_pi/gateway/certs:/app/certs:ro
+    networks:
+      - enviromesh
+
+  # ----------------------------------------------------------------------------
+  # RPi 2 CORE CENTRAL SERVICES
+  # ----------------------------------------------------------------------------
+
+  # Central EMQX broker: Receives forwarded telemetry from Gateway
+  emqx-core:
+    image: emqx/emqx:5.8.8
+    container_name: enviromesh-emqx-core
+    hostname: emqx-core
+    restart: unless-stopped
+    environment:
+      EMQX_NODE_NAME: "emqx@127.0.0.1"
+      EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_CORE_DASHBOARD_USERNAME:-admin}"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_CORE_DASHBOARD_PASSWORD:-admin123}"
+      EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE:-enviromesh_secret_cookie}"
+    ports:
+      # MQTT over TLS port
+      - "${MQTT_TLS_BIND_IP:-0.0.0.0}:${MQTT_TLS_PORT:-8883}:8883"
+      # Plain MQTT for host debugging (mapped to port 1884 to avoid conflict with local broker)
+      - "127.0.0.1:${MQTT_CORE_DEBUG_PORT:-1884}:1883"
+      # Core EMQX dashboard (18084 to avoid conflict with local broker on 18083)
+      - "127.0.0.1:${EMQX_CORE_DASHBOARD_PORT:-18084}:18083"
+    volumes:
+      - emqx_core_data:/opt/emqx/data
+      - emqx_core_log:/opt/emqx/log
+      - ./raspberry_pi/core/emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./raspberry_pi/core/emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./raspberry_pi/core/emqx/users.json:/opt/emqx/etc/users.json:ro
+      - ./raspberry_pi/core/emqx/certs:/opt/emqx/etc/certs:ro
+    healthcheck:
+      test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+    networks:
+      - enviromesh
+
+  # PostgreSQL + TimescaleDB central database
   timescaledb:
-    image: timescale/timescaledb:2.17.2-pg16-oss # Lite version for RPi 3, 4 and 5
+    image: timescale/timescaledb:2.17.2-pg16-oss
     container_name: enviromesh-timescaledb
     restart: unless-stopped
-    ports:
-      - "0.0.0.0:5432:5432"
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: "${POSTGRES_DB:-enviromesh}"
+      POSTGRES_USER: "${POSTGRES_USER:-enviromesh_app}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-enviromesh_secret_db_pass}"
       TZ: UTC
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
-    # No public database port; application services use the internal network.
+      - ./raspberry_pi/core/database/migrations:/migrations:ro
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+        - "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
       interval: 10s
       timeout: 5s
       retries: 5
@@ -56,44 +187,47 @@ services:
     networks:
       - enviromesh
 
-  # Python API, MQTT Subscriber, validation, and database writer
+  # FastAPI Backend REST API, WebSocket, and Database Writer
   backend:
     build:
       context: ./raspberry_pi/core/backend
       dockerfile: Dockerfile
     container_name: enviromesh-backend
     restart: unless-stopped
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
-
-      MQTT_HOST: emqx
-      MQTT_PORT: 1883
-      MQTT_USERNAME: ${MQTT_APP_USERNAME}
-      MQTT_PASSWORD: ${MQTT_APP_PASSWORD}
-      MQTT_TOPIC: enviromesh/devices/+/telemetry
-
-      DB_HOST: timescaledb
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      TZ: UTC
     depends_on:
-      emqx:
+      emqx-core:
         condition: service_healthy
       timescaledb:
         condition: service_healthy
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+
+      MQTT_HOST: "emqx-core"
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: "${MQTT_APP_USERNAME:-enviromesh_backend}"
+      MQTT_PASSWORD: "${MQTT_APP_PASSWORD:-backend_secret_pass}"
+      MQTT_TOPIC: "enviromesh/gateway/+/telemetry"
+
+      DB_HOST: "timescaledb"
+      DB_PORT: "5432"
+      DB_NAME: "${POSTGRES_DB:-enviromesh}"
+      DB_USER: "${POSTGRES_USER:-enviromesh_app}"
+      DB_PASSWORD: "${POSTGRES_PASSWORD:-enviromesh_secret_db_pass}"
+
+      AUTH_REQUIRED: "${AUTH_REQUIRED:-true}"
+      JWT_SECRET: "${JWT_SECRET:-enviromesh_super_secret_jwt_key_at_least_32_chars}"
+      JWT_EXPIRE_MINUTES: "${JWT_EXPIRE_MINUTES:-60}"
+
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TZ: UTC
     expose:
       - "8000"
-    privileged: true
-    volumes:
-      - /dev:/dev
     networks:
       - enviromesh
 
-  # Web dashboard frontend
+  # React + Vite Dashboard
   dashboard:
     build:
       context: ./raspberry_pi/core/dashboard
@@ -105,13 +239,13 @@ services:
     networks:
       - enviromesh
 
-  # Single entry point for browser access to the dashboard and API
+  # Nginx Gateway Reverse Proxy
   nginx:
     image: nginx:1.28-alpine
     container_name: enviromesh-nginx
     restart: unless-stopped
     ports:
-      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8081}:80"
+      - "${WEB_BIND_IP:-0.0.0.0}:${WEB_PORT:-8080}:80"
     volumes:
       - ./raspberry_pi/core/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -121,8 +255,11 @@ services:
       - enviromesh
 
 volumes:
-  emqx_data:
-  emqx_log:
+  emqx_local_data:
+  emqx_local_log:
+  gateway_queue:
+  emqx_core_data:
+  emqx_core_log:
   timescale_data:
 
 networks:

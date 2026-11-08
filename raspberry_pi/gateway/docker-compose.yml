@@ -24,6 +24,7 @@ services:
     restart: unless-stopped
     environment:
       EMQX_NODE_NAME: "emqx@127.0.0.1"
+      EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE:-enviromesh_secret_cookie_local}"
       EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_DASHBOARD_USERNAME}"
       EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_DASHBOARD_PASSWORD}"
       EMQX_AUTHENTICATION__1__MECHANISM: password_based
@@ -37,6 +38,8 @@ services:
       - emqx_local_data:/opt/emqx/data
       - emqx_local_log:/opt/emqx/log
       - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./emqx/users.json:/opt/emqx/etc/users.json:ro
     healthcheck:
       test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
       interval: 30s

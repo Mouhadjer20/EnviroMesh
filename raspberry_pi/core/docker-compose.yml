@@ -44,6 +44,7 @@ services:
       - emqx_core_log:/opt/emqx/log
       - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
       - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+      - ./emqx/users.json:/opt/emqx/etc/users.json:ro
       - ./emqx/certs:/opt/emqx/etc/certs:ro
     healthcheck:
       test: [ "CMD", "/opt/emqx/bin/emqx", "ctl", "status" ]
