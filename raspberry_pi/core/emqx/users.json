@@ -1,0 +1,13 @@
+[
+  {
+    "user_id": "gw_forwarder",
+    "password": "gw_forward_secret",
+    "is_superuser": false
+  },
+  {
+    "user_id": "enviromesh_backend",
+    "password": "backend_secret_pass",
+    "is_superuser": false
+  }
+]
+

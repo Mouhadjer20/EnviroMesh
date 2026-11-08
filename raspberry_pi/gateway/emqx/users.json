@@ -1,0 +1,43 @@
+[
+  {
+    "user_id": "gw_ingestion",
+    "password": "gw_ingest_secret",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g11",
+    "password": "node_secret_g11",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g31",
+    "password": "node_secret_g31",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g41",
+    "password": "node_secret_g41",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g51",
+    "password": "node_secret_g51",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g61",
+    "password": "node_secret_g61",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g42",
+    "password": "node_secret_g42",
+    "is_superuser": false
+  },
+  {
+    "user_id": "g43",
+    "password": "node_secret_g43",
+    "is_superuser": false
+  }
+]
+
