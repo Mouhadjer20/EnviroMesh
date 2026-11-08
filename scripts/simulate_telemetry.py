@@ -71,6 +71,12 @@ DEVICE_PROFILES = {
         "protocol": "wifi_mqtt",
         "sensors": ["BMP280", "MQ-2", "Water Sensor"],
     },
+    "G51": {
+        "group_code": "G5",
+        "zone": "Sector_B_Storage",
+        "protocol": "wifi_mqtt",
+        "sensors": ["MQ-2", "DHT11", "Water Sensor"],
+    },
     "G61": {
         "group_code": "G6",
         "zone": "Sector_A_Valve",

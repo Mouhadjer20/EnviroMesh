@@ -121,8 +121,10 @@ def main() -> None:
 
     lan_ip         = get_lan_ip()
     web_port       = int(os.getenv("WEB_PORT",              8080))
-    mqtt_port      = int(os.getenv("MQTT_PORT",             1883))
-    emqx_dash_port = int(os.getenv("EMQX_DASHBOARD_PORT", 18083))
+    mqtt_local_port= int(os.getenv("MQTT_LOCAL_PORT",       1883))
+    mqtt_tls_port  = int(os.getenv("MQTT_TLS_PORT",         8883))
+    emqx_loc_dash  = int(os.getenv("EMQX_LOCAL_DASHBOARD_PORT", 18083))
+    emqx_core_dash = int(os.getenv("EMQX_CORE_DASHBOARD_PORT",  18084))
     db_name        = os.getenv("POSTGRES_DB",   "enviromesh")
     db_user        = os.getenv("POSTGRES_USER", "enviromesh_app")
 
@@ -130,10 +132,12 @@ def main() -> None:
     local = "localhost"
 
     print(f"{CYAN}{BOLD}This machine's LAN IP: {lan_ip}{RESET}")
-    print(f"Other devices on the same network can use:\n")
-    print(f"  🌐  Dashboard + API : {BOLD}http://{lan_ip}:{web_port}{RESET}")
-    print(f"  📡  MQTT Broker     : {BOLD}{lan_ip}:{mqtt_port}{RESET}")
-    print(f"  🛠   EMQX Console    : {BOLD}http://{lan_ip}:{emqx_dash_port}{RESET}\n")
+    print(f"Service Endpoints:\n")
+    print(f"  🌐  Web Dashboard & API     : {BOLD}http://{lan_ip}:{web_port}{RESET}")
+    print(f"  📡  Gateway MQTT Ingestion  : {BOLD}{lan_ip}:{mqtt_local_port}{RESET}")
+    print(f"  🔒  Core Central MQTT (TLS) : {BOLD}{lan_ip}:{mqtt_tls_port}{RESET}")
+    print(f"  🛠   Gateway EMQX Console    : {BOLD}http://{lan_ip}:{emqx_loc_dash}{RESET}")
+    print(f"  🛠   Core EMQX Console       : {BOLD}http://{lan_ip}:{emqx_core_dash}{RESET}\n")
 
     checks: list[tuple[str, str, bool, str]] = []
 
@@ -145,25 +149,43 @@ def main() -> None:
     ok, msg = check_http(f"http://{local}:{web_port}/api/health")
     checks.append(("FastAPI Backend (/api/health)", f"{local}:{web_port}/api", ok, msg))
 
-    # 3. EMQX MQTT broker — bound to 0.0.0.0, reachable from LAN
-    ok_mqtt = check_tcp_port(local, mqtt_port)
+    # 3. Gateway Local EMQX MQTT broker (port 1883)
+    ok_mqtt = check_tcp_port(local, mqtt_local_port)
     checks.append((
-        "EMQX MQTT Broker",
-        f"{local}:{mqtt_port}",
+        "Gateway Local EMQX (Ingestion)",
+        f"{local}:{mqtt_local_port}",
         ok_mqtt,
-        f"Port open — LAN clients: {lan_ip}:{mqtt_port}" if ok_mqtt else "Connection Refused",
+        f"Port open — Field nodes & simulator: {lan_ip}:{mqtt_local_port}" if ok_mqtt else "Connection Refused",
     ))
 
-    # 4. EMQX web console — bound to 0.0.0.0, reachable from LAN
-    ok_dash = check_tcp_port(local, emqx_dash_port)
+    # 4. Core Central EMQX MQTT TLS broker (port 8883)
+    ok_tls = check_tcp_port(local, mqtt_tls_port)
     checks.append((
-        "EMQX Web Console",
-        f"{local}:{emqx_dash_port}",
-        ok_dash,
-        f"Open — http://{lan_ip}:{emqx_dash_port}" if ok_dash else "Connection Refused",
+        "Core Central EMQX (TLS)",
+        f"{local}:{mqtt_tls_port}",
+        ok_tls,
+        f"TLS port open — Inter-Pi forwarding" if ok_tls else "Connection Refused (or plain mode)",
     ))
 
-    # 5. TimescaleDB — internal to Docker; check via docker exec
+    # 5. Gateway local EMQX web console
+    ok_dash = check_tcp_port(local, emqx_loc_dash)
+    checks.append((
+        "Gateway EMQX Console",
+        f"{local}:{emqx_loc_dash}",
+        ok_dash,
+        f"Open — http://{lan_ip}:{emqx_loc_dash}" if ok_dash else "Connection Refused",
+    ))
+
+    # 6. Core central EMQX web console
+    ok_core_dash = check_tcp_port(local, emqx_core_dash)
+    checks.append((
+        "Core EMQX Console",
+        f"{local}:{emqx_core_dash}",
+        ok_core_dash,
+        f"Open — http://{lan_ip}:{emqx_core_dash}" if ok_core_dash else "Connection Refused",
+    ))
+
+    # 7. TimescaleDB — internal to Docker; check via docker exec
     ok_db, msg_db = check_timescaledb_docker(db_name, db_user)
     checks.append(("TimescaleDB Database", f"docker:5432/{db_name}", ok_db, msg_db))
 
