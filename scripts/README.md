@@ -1,181 +1,178 @@
-# EnviroMesh — Automation & Helper Scripts
+# EnviroMesh — Automation, Simulation & Helper Scripts
 
-This directory contains command-line utilities and test harnesses designed to streamline development, testing, deployment, and monitoring across all layers of the EnviroMesh platform.
+This directory contains command-line utilities, test harnesses, and simulators designed to streamline development, testing, deployment, and monitoring across all layers of the EnviroMesh platform.
 
 ---
 
 ## Table of Contents
 
 - [Script Overview](#script-overview)
-- [1. Environment & Setup](#1-environment--setup)
-- [2. Managing Docker Services](#2-managing-docker-services)
-- [3. Database Management (PostgreSQL & TimescaleDB)](#3-database-management-postgresql--timescaledb)
-- [4. Simulating Sensor Telemetry (Hardware-Free Testing)](#4-simulating-sensor-telemetry-hardware-free-testing)
-- [5. Live MQTT Telemetry Monitor](#5-live-mqtt-telemetry-monitor)
-- [6. System Health Diagnostic](#6-system-health-diagnostic)
-- [7. LoRa Ingestion Pipeline Testing](#7-lora-ingestion-pipeline-testing)
+- [1. Single-Device Development & Simulation (Core + Gateway)](#1-single-device-development--simulation-core--gateway)
+- [2. Automated Testing & Pipeline Simulation](#2-automated-testing--pipeline-simulation)
+- [3. Simulating Field Sensor Telemetry](#3-simulating-field-sensor-telemetry)
+- [4. LoRa Packet Ingestion Testing](#4-lora-packet-ingestion-testing)
+- [5. System Health Diagnostics](#5-system-health-diagnostics)
+- [6. Database Management (PostgreSQL & TimescaleDB)](#6-database-management-postgresql--timescaledb)
+- [7. Two-Raspberry-Pi Distributed Deployment Scripts](#7-two-raspberry-pi-distributed-deployment-scripts)
 - [Requirements](#requirements)
 
 ---
 
 ## Script Overview
 
-| Script | Type | Description |
+| Script | Mode | Description |
 |---|---|---|
-| [`setup_env.sh`](setup_env.sh) | Bash | Initializes local workspace, `.env` file, directory structure, permissions, and Python virtual environment (`.venv`). |
-| [`docker_control.sh`](docker_control.sh) | Bash | Manages the Docker Compose stack (`emqx`, `timescaledb`, `backend`, `dashboard`, `nginx`) with built-in `/api/health` wait polling. |
-| [`db_manage.sh`](db_manage.sh) | Bash | Controls PostgreSQL & TimescaleDB: migrations, reference data seeding, verification queries, interactive `psql` shell, and resets. |
-| [`simulate_telemetry.py`](simulate_telemetry.py) | Python | Synthetic telemetry generator for field nodes (`G11`, `G41`, `G31`, `G61`) over MQTT. Supports anomaly injection (gas leak, fire, water leak). |
-| [`mqtt_monitor.py`](mqtt_monitor.py) | Python | Real-time terminal dashboard subscribing to MQTT topics (`enviromesh/#`), displaying live formatted readings and alerts. |
-| [`check_health.py`](check_health.py) | Python | Automated ANSI-colored diagnostic tool displaying local LAN IP and checking connectivity to Nginx, FastAPI backend, EMQX, and TimescaleDB. |
-| [`lora_packet_inject.py`](lora_packet_inject.py) | Python | LoRa pipeline test harness; validates and writes raw & parsed LoRa packets to TimescaleDB without physical SX1278 hardware. |
+| [`run_tests.py`](run_tests.py) | **Test Runner** | Automated runner for syntax verification, end-to-end pipeline simulations, simulator checks, and unit tests. |
+| [`simulate_pipeline.py`](simulate_pipeline.py) | **Simulator** | Hardware-free pipeline test: Field Nodes -> Gateway Validation/Normalization -> SQLite WAL Queue -> Network Recovery -> Core Deduplication. |
+| [`simulate_telemetry.py`](simulate_telemetry.py) | **Simulator** | Synthetic telemetry generator for field nodes (`G11`, `G41`, `G31`, `G61`) over MQTT. Supports anomaly injection (gas leak, fire, water leak). |
+| [`lora_packet_inject.py`](lora_packet_inject.py) | **Test Harness** | LoRa pipeline test harness; validates raw & parsed LoRa packets without physical SX1278 hardware. |
+| [`docker_control.sh`](docker_control.sh) | **Unified Stack** | Controls the unified single-device Docker Compose stack (Gateway + Core: `emqx-local`, `gateway`, `emqx-core`, `timescaledb`, `backend`, `dashboard`, `nginx`). |
+| [`check_health.py`](check_health.py) | **Diagnostics** | Unified health diagnostic tool checking all single-device endpoints (Nginx, FastAPI, Gateway EMQX, Core EMQX, TimescaleDB). |
+| [`mqtt_monitor.py`](mqtt_monitor.py) | **Monitor** | Real-time terminal dashboard subscribing to MQTT topics (`enviromesh/#`), displaying live formatted readings. |
+| [`db_manage.sh`](db_manage.sh) | **Database** | PostgreSQL & TimescaleDB manager: migrations, reference data seeding, verification queries, interactive shell. |
+| [`backup_database.sh`](backup_database.sh) | **Maintenance** | Creates timestamped and rotated PostgreSQL backups. |
+| [`setup_gateway.sh`](setup_gateway.sh) | **2-Pi Setup** | Configures RPi 1 Gateway environment, permissions, and service dependencies. |
+| [`setup_core.sh`](setup_core.sh) | **2-Pi Setup** | Configures RPi 2 Core environment, database directories, and permissions. |
+| [`deploy_gateway.sh`](deploy_gateway.sh) | **2-Pi Deploy** | Deploys RPi 1 Gateway services via Docker Compose. |
+| [`deploy_core.sh`](deploy_core.sh) | **2-Pi Deploy** | Deploys RPi 2 Core services via Docker Compose with zero-loss volume persistence. |
+| [`check_gateway_health.py`](check_gateway_health.py) | **2-Pi Health** | Dedicated health check for RPi 1 Gateway (local broker, queue depth, forwarder state). |
+| [`check_core_health.py`](check_core_health.py) | **2-Pi Health** | Dedicated health check for RPi 2 Core (central broker, TLS, TimescaleDB, API). |
 
 ---
 
-## 1. Environment & Setup
+## 1. Single-Device Development & Simulation (Core + Gateway)
 
-Run this script first when cloning the repository or setting up a new development environment:
-
-```bash
-./scripts/setup_env.sh
-```
-
-**What it does:**
-- Verifies system prerequisites (`docker`, `python3`, `git`).
-- Creates `.env` from `.env.example` if it does not exist.
-- Sets executable permissions on all scripts in `scripts/`.
-- Prepares directories for gateway, core, and firmware.
-- Creates and sets up Python virtual environment (`.venv`) with core and optional hardware dependencies.
-
----
-
-## 2. Managing Docker Services
-
-Control all five containerized microservices without needing long Docker commands:
+Run both Gateway and Core together on a single machine (laptop, PC, or single Raspberry Pi):
 
 ```bash
-# Start all containers in the background (polls /api/health until backend is ready)
+# 1. Start all 7 microservices in background
 ./scripts/docker_control.sh start
 
-# Check container status, ports, and health
+# 2. Check service status, ports, and health
 ./scripts/docker_control.sh status
 
-# Follow real-time colored logs for all services (or specify one: backend, emqx, timescaledb)
-./scripts/docker_control.sh logs backend
+# 3. View live logs across services (or specify one: backend, gateway, emqx-local)
+./scripts/docker_control.sh logs gateway
 
-# Rebuild container images after making backend or dashboard changes
-./scripts/docker_control.sh build
-
-# Stop all containers
+# 4. Stop containers
 ./scripts/docker_control.sh stop
 ```
 
 ---
 
-## 3. Database Management (PostgreSQL & TimescaleDB)
+## 2. Automated Testing & Pipeline Simulation
+
+Verify all components and test the complete end-to-end data flow with zero external dependencies:
+
+```bash
+# Run the complete test and simulation suite:
+python3 scripts/run_tests.py
+
+# Run only the end-to-end pipeline simulation (Gateway SQLite queue + Core deduplication):
+python3 scripts/simulate_pipeline.py
+```
+
+---
+
+## 3. Simulating Field Sensor Telemetry
+
+Simulate field nodes transmitting realistic sensor data to Gateway EMQX (port 1883):
+
+```bash
+# Simulate G11 node emitting every 2 seconds (infinite loop)
+python3 scripts/simulate_telemetry.py --device G11 --interval 2.0
+
+# Simulate all 4 devices cycling periodically (10 messages total)
+python3 scripts/simulate_telemetry.py --device all --count 10
+
+# Simulate an emergency gas leak anomaly
+python3 scripts/simulate_telemetry.py --device G11 --anomaly gas_leak
+
+# Simulate water leak detection
+python3 scripts/simulate_telemetry.py --device G41 --anomaly water_leak
+
+# Print JSON payloads to stdout without publishing to MQTT
+python3 scripts/simulate_telemetry.py --device G31 --print-only
+```
+
+---
+
+## 4. LoRa Packet Ingestion Testing
+
+Test the LoRa processing pipeline without physical SX1278 hardware:
+
+```bash
+# Inject a valid G11 LoRa packet
+python3 scripts/lora_packet_inject.py --device G11 --gas 55.4 --temp 24.1
+
+# Inject an invalid JSON payload to verify error handling and raw logging
+python3 scripts/lora_packet_inject.py --corrupt-json
+```
+
+---
+
+## 5. System Health Diagnostics
+
+Verify all single-device service endpoints in a single command with ANSI colored status indicators:
+
+```bash
+python3 scripts/check_health.py
+```
+
+Outputs the detected LAN IP and checks:
+- **Nginx Reverse Proxy** (`http://localhost:8080`)
+- **FastAPI REST API** (`http://localhost:8080/api/health`)
+- **Gateway Local EMQX Broker** (port 1883)
+- **Core Central EMQX Broker** (port 8883)
+- **Gateway & Core Web Consoles** (ports 18083, 18084)
+- **TimescaleDB Database** (PostgreSQL container connection)
+
+---
+
+## 6. Database Management (PostgreSQL & TimescaleDB)
 
 Manage migrations, seed data, and query verification directly:
 
 ```bash
-# 1. Initialize complete database (extensions + migrations + seed + verification)
+# Initialize complete database (extensions + migrations + seed + verification)
 ./scripts/db_manage.sh init
 
-# 2. Run only migrations
+# Run migrations (including registry, telemetry, metadata, active users, password rotation)
 ./scripts/db_manage.sh migrate
 
-# 3. Seed student technician accounts and device registry
+# Seed accounts and device registry
 ./scripts/db_manage.sh seed
 
-# 4. Verify seeded database topology
-./scripts/db_manage.sh verify
-
-# 5. Show current table row counts
+# Show current table row counts
 ./scripts/db_manage.sh status
 
-# 6. Open an interactive psql database shell
+# Open interactive psql shell
 ./scripts/db_manage.sh shell
-
-# 7. Reset and re-apply all schemas (destructive!)
-./scripts/db_manage.sh reset
 ```
 
 ---
 
-## 4. Simulating Sensor Telemetry (Hardware-Free Testing)
+## 7. Two-Raspberry-Pi Distributed Deployment Scripts
 
-Simulate field nodes transmitting realistic sensor data to EMQX and TimescaleDB:
+When deploying across two separate physical Raspberry Pis:
 
+### On RPi 1 (Edge Gateway):
 ```bash
-# Simulate G11 node emitting every 2 seconds (infinite loop)
-./scripts/simulate_telemetry.py --device G11 --interval 2.0
-
-# Simulate all 4 devices cycling periodically (10 messages total)
-./scripts/simulate_telemetry.py --device all --count 10
-
-# Simulate an emergency gas leak anomaly
-./scripts/simulate_telemetry.py --device G11 --anomaly gas_leak
-
-# Simulate water leak detection
-./scripts/simulate_telemetry.py --device G41 --anomaly water_leak
-
-# Print JSON payloads to stdout without publishing to MQTT
-./scripts/simulate_telemetry.py --device G31 --print-only
+./scripts/setup_gateway.sh
+./scripts/deploy_gateway.sh
+python3 scripts/check_gateway_health.py
 ```
 
----
-
-## 5. Live MQTT Telemetry Monitor
-
-Monitor incoming telemetry on the broker live in the terminal:
-
+### On RPi 2 (Central Core):
 ```bash
-# Monitor all topics (enviromesh/#)
-./scripts/mqtt_monitor.py
-
-# Monitor a specific device topic
-./scripts/mqtt_monitor.py --topic "enviromesh/devices/G11/telemetry"
-
-# Enable verbose mode to inspect raw JSON payloads
-./scripts/mqtt_monitor.py -v
-```
-
----
-
-## 6. System Health Diagnostic
-
-Verify all architectural layers in a single command with ANSI colored status indicators:
-
-```bash
-./scripts/check_health.py
-```
-
-Outputs the detected LAN IP (useful for connecting field nodes and laptops) and a status table covering:
-- **Reverse Proxy** (Nginx on port 8080)
-- **Backend REST API** (HTTP on port 8080 `/api/health`)
-- **MQTT Broker** (EMQX TCP on port 1883)
-- **EMQX Web Console** (port 18083)
-- **TimescaleDB** (PostgreSQL connection & extension verification via `pg_isready`)
-
----
-
-## 7. LoRa Ingestion Pipeline Testing
-
-Test the backend LoRa processing pipeline (`process_packet`, `telemetry_validator`, `database_writer`) without a physical SX1278 module:
-
-```bash
-# Inject a valid G11 LoRa packet
-./scripts/lora_packet_inject.py --device G11 --gas 55.4 --temp 24.1
-
-# Inject an invalid JSON payload to verify error handling and raw logging
-./scripts/lora_packet_inject.py --corrupt-json
+./scripts/setup_core.sh
+./scripts/deploy_core.sh
+python3 scripts/check_core_health.py
 ```
 
 ---
 
 ## Requirements
 
-All scripts run on **macOS**, **Linux** (including Raspberry Pi OS), and WSL.
-Dependencies:
-- Bash 4+
-- Docker Engine & Docker Compose v2
 - Python 3.10+ (with `paho-mqtt`, `psycopg2-binary`, `python-dotenv`)
+- Docker Engine & Docker Compose v2 (for containerized execution)

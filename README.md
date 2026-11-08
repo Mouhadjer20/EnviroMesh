@@ -441,15 +441,26 @@ Database migrations run automatically during deployment via `scripts/deploy_core
 ## 13. API & Dashboard
 
 The dashboard and API are accessed through Nginx on port `8080`:
-- **Dashboard UI**: `http://192.168.1.5:8080/`
-- **FastAPI OpenAPI Docs**: `http://192.168.1.5:8080/api/docs`
-- **Health Check**: `http://192.168.1.5:8080/api/health`
+- **Dashboard UI**: `http://localhost:8080/` (or LAN IP)
+- **FastAPI OpenAPI Docs**: `http://localhost:8080/api/docs`
+- **Health Check**: `http://localhost:8080/api/health`
 
 ### Key Endpoints
-- `GET /api/devices/`: List registered environmental nodes.
+- `POST /api/auth/login`: Authenticate user credentials and receive JWT bearer token.
+- `GET /api/auth/me`: Return authenticated user profile and assigned role (`admin` or `zone_technician`).
+- `POST /api/auth/change-password`: Password rotation endpoint (mandatory upon initial login).
+- `GET /api/devices/`: List registered environmental nodes (scoped by technician zone).
 - `GET /api/devices/{device_id}`: Detailed telemetry and metadata for a specific node.
 - `GET /api/telemetry/latest`: Latest readings across all active nodes.
 - `GET /api/groups/`: Zone groupings and regional status summaries.
+- `GET /api/users/`: Administrator user management & account creation.
+
+### Dashboard Pages
+- `/`: Real-time sensor overview, charts, and node status cards.
+- `/login`: Secure user authentication with JWT storage.
+- `/users`: Administrator portal for creating and managing technicians.
+- `/groups`: Zone and group allocation.
+- `/settings`: Profile management and password rotation.
 
 ---
 
@@ -460,7 +471,7 @@ All Wi-Fi nodes must point to RPi 1 Gateway:
 // Example: firmware/nodes/node_g31/src/secrets.h
 #define WIFI_SSID        "Warehouse_IoT_2.4G"
 #define WIFI_PASSWORD    "WarehousePassword"
-#define MQTT_BROKER_HOST "192.168.1.20"  // RPi 1 Gateway IP (NEVER RPi 2)
+#define MQTT_BROKER_HOST "192.168.1.20"  // RPi 1 Gateway IP (or localhost in single-device testing)
 #define MQTT_PORT        1883
 #define MQTT_USERNAME    "g31"
 #define MQTT_PASSWORD    "DevicePasswordG31"
@@ -477,12 +488,42 @@ For LoRa nodes (`node_g11`, `node_g41`), verify that the RF frequency is `433E6`
    - On RPi 2: Allow TCP port 8080 (Web) from LAN; allow port 8883 (TLS) only from RPi 1 (`192.168.1.20`).
 2. **Database Isolation**: PostgreSQL port `5432` has no host port bindings. Only containers in the internal Docker bridge network can communicate with the database.
 3. **Secret Isolation**: Real secrets are kept strictly in `.env` files with `chmod 600` and are ignored in `.gitignore`.
+4. **JWT Authentication & Role-Based Access Control**:
+   - Protected API routes enforce JWT bearer tokens.
+   - Zone technicians are scoped strictly to their assigned group nodes.
 
 ---
 
 ## 16. Deployment Procedures (Step-by-Step)
 
-### Deploying RPi 2 (Core) First
+EnviroMesh supports two deployment topologies:
+
+### Mode A: Unified Single-Device Deployment (Development, Simulation & Lab Testing)
+Runs **both Gateway and Core** on the same physical host (laptop, PC, or single Raspberry Pi):
+
+```bash
+# 1. Clone repository
+git clone <REPO_URL> && cd enviromesh
+
+# 2. Configure environment
+cp .env.example .env && nano .env
+
+# 3. Start all 7 unified services (Gateway + Core)
+./scripts/docker_control.sh start
+
+# 4. Check status & service endpoints
+./scripts/docker_control.sh status
+
+# 5. Run automated pipeline simulation & tests
+python3 scripts/run_tests.py
+
+# 6. Simulate live telemetry emissions from all field nodes
+python3 scripts/simulate_telemetry.py --count 10 --device all
+```
+
+### Mode B: Distributed Two-Raspberry-Pi Deployment (Production)
+
+#### Deploying RPi 2 (Core) First
 ```bash
 # 1. Clone repository
 git clone <REPO_URL> /home/pi/enviromesh && cd /home/pi/enviromesh
@@ -504,7 +545,7 @@ docker exec -it enviromesh-emqx-core \
   emqx ctl admins add enviromesh_backend 'BACKEND_PASSWORD' 'Enviromesh Backend'
 ```
 
-### Deploying RPi 1 (Gateway)
+#### Deploying RPi 1 (Gateway)
 ```bash
 # 1. Clone repository
 git clone <REPO_URL> /home/pi/enviromesh && cd /home/pi/enviromesh
@@ -532,27 +573,29 @@ docker exec -it enviromesh-emqx-local \
 
 ## 17. Health Checks & Verification
 
-EnviroMesh includes dedicated automated verification scripts:
+EnviroMesh includes automated verification scripts for every scenario:
 
-### Gateway Verification (on RPi 1)
+### Unified Single-Device Verification (Same Machine)
+```bash
+python3 scripts/check_health.py
+```
+Checks:
+- Reverse Proxy (Nginx on port 8080)
+- Backend REST API (`/api/health`)
+- Gateway Local EMQX Broker (port 1883)
+- Core Central EMQX TLS Broker (port 8883)
+- Gateway & Core EMQX Web Consoles (ports 18083, 18084)
+- TimescaleDB database container status
+
+### Distributed RPi 1 Gateway Verification
 ```bash
 python3 scripts/check_gateway_health.py
 ```
-Checks:
-- Port 1883 (Local EMQX)
-- SX1278 SPI interface availability
-- SQLite queue integrity & pending count
-- RPi 2 port 8883 TLS reachability
 
-### Core Verification (on RPi 2)
+### Distributed RPi 2 Core Verification
 ```bash
 python3 scripts/check_core_health.py
 ```
-Checks:
-- Ports 8883 & 1883 on Central EMQX
-- TimescaleDB connectivity & latest ingested record
-- FastAPI `/health` endpoint
-- Nginx reverse proxy HTTP 200 response
 
 ---
 

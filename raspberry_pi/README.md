@@ -86,39 +86,33 @@ The Raspberry Pi (RPi 3 / 4 / 5) serves as the central hub of the **EnviroMesh**
 
 ```
 raspberry_pi/
-├── backend/                          # FastAPI REST API & Ingestion Engine
-│   ├── main.py                       # Application entry point: FastAPI + MQTT + LoRa threads
-│   ├── requirements.txt              # Core Python runtime dependencies (psycopg2-binary, fastapi)
-│   ├── requirements-hardware.txt     # Raspberry Pi hardware drivers (spidev, RPi.GPIO)
-│   ├── Dockerfile                    # Container image with SPI/GPIO passthrough
-│   ├── routes/                       # Modular API router endpoints
-│   │   ├── __init__.py
-│   │   ├── devices.py                # Device registration & inventory CRUD
-│   │   ├── telemetry.py              # Time-series query endpoints
-│   │   ├── alerts.py                 # Threshold alerts & acknowledgment
-│   │   └── users.py                  # User accounts & RBAC management
-│   ├── services/                     # Ingestion, validation & persistence services
-│   │   ├── __init__.py
-│   │   ├── colored_logger.py         # High-visibility ANSI colored logger
-│   │   ├── mqtt_subscriber.py        # Paho-MQTT client for EMQX telemetry
-│   │   ├── lora_receiver.py          # SX1278 hardware SPI driver & frame receiver
-│   │   ├── telemetry_validator.py    # Payload schema & metric boundary validator
-│   │   └── database_writer.py        # TimescaleDB connection pool & hypertable writer
-│   └── auth/                         # Authentication & RBAC documentation
-│       └── README.md                 # JWT & bcrypt architecture specifications
-├── dashboard/                        # Web Dashboard Frontend
-│   ├── index.html                    # Single-page dashboard interface
-│   ├── Dockerfile                    # Nginx container hosting static assets
-│   └── README.md                     # Dashboard design and roadmap
-├── db/                               # Database Schemas & Seed Data
-│   ├── migration/
-│   │   ├── 001_create_registry.sql   # Relational schema (groups, users, sensors, devices)
-│   │   └── 001_create_telemetry.sql  # TimescaleDB hypertables & indexes
-│   ├── seed/
-│   │   ├── 001_seed_registry.sql     # Reference seed data (student technicians & devices)
-│   │   └── 001_verify_seed_registry.sql # Verification queries
-│   └── README.md                     # Database setup and documentation
-└── README.md                         # This file
+├── gateway/                          # RPi 1 Edge Gateway Layer
+│   ├── gateway/                      # Python edge services (LoRa receiver, Ingestion, SQLite queue, Forwarder)
+│   │   ├── config.py                 # Gateway environment variable loader
+│   │   ├── health_monitor.py         # Edge health and queue monitoring
+│   │   ├── logger.py                 # Structured logging
+│   │   ├── lora_receiver.py          # SX1278 SPI LoRa driver & signal decoder
+│   │   ├── main.py                   # Multi-threaded edge supervisor daemon
+│   │   ├── mqtt_forwarder.py         # QoS 1 TLS forwarder with PUBACK tracking
+│   │   ├── mqtt_ingestion.py         # Local EMQX Wi-Fi telemetry consumer
+│   │   ├── sqlite_queue.py           # Persistent WAL offline queue with FULL sync
+│   │   ├── telemetry_normalizer.py   # Envelope & UUID normalizer
+│   │   └── telemetry_validator.py    # Metric boundary & type checking
+│   ├── emqx/                         # Local EMQX broker ACL & configuration
+│   ├── systemd/                      # Native Linux systemd services
+│   ├── Dockerfile                    # Container definition
+│   └── docker-compose.yml            # Gateway standalone deployment
+└── core/                             # RPi 2 Central Processing Layer
+    ├── backend/                      # FastAPI REST & WebSocket API, Ingestion Engine
+    │   ├── main.py                   # FastAPI application supervisor
+    │   ├── routes/                   # API routers (auth, devices, telemetry, users, groups)
+    │   └── services/                 # Services (auth, database_writer, mqtt_subscriber, user_store)
+    ├── dashboard/                    # React + Vite web dashboard (Login, Charts, Users, Groups)
+    ├── database/                     # TimescaleDB migrations (001-005) & seed SQL
+    ├── emqx/                         # Central EMQX broker configuration & TLS certs
+    ├── nginx/                        # Reverse proxy configuration (routing /api -> backend, / -> dashboard)
+    ├── systemd/                      # Core systemd auto-start service
+    └── docker-compose.yml            # Core standalone deployment
 ```
 
 ---
