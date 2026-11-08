@@ -2,11 +2,13 @@
 # ==============================================================================
 # EnviroMesh — Docker Compose Stack Controller
 # Simplifies starting, stopping, restarting, and inspecting the EnviroMesh services:
-# - emqx (MQTT broker 5.8.8)
-# - timescaledb (PostgreSQL 16 + TimescaleDB 2.17.2)
-# - backend (FastAPI + MQTT consumer + LoRa receiver)
-# - dashboard (Nginx static frontend)
-# - nginx (Gateway reverse proxy on port 8080)
+# - emqx-local  (RPi 1 Local Gateway MQTT broker on port 1883)
+# - gateway     (RPi 1 Gateway ingestion, SQLite WAL queue, forwarder)
+# - emqx-core   (RPi 2 Central Core MQTT broker on TLS port 8883 / debug 1884)
+# - timescaledb (RPi 2 PostgreSQL 16 + TimescaleDB 2.17)
+# - backend     (RPi 2 FastAPI + MQTT subscriber + DB writer)
+# - dashboard   (RPi 2 React + Vite dashboard static frontend)
+# - nginx       (RPi 2 Gateway reverse proxy on port 8080)
 # ==============================================================================
 
 set -euo pipefail
@@ -36,6 +38,7 @@ Commands:
   status | ps      Show status, ports, and health checks of all services
   logs [service]   Follow live container logs (e.g. logs backend, logs emqx)
   build            Rebuild container images (backend, dashboard)
+  auth             Provision / synchronize EMQX authentication users
   clean            Stop containers and remove volumes (destructive!)
   help             Show this help message
 EOF
@@ -62,6 +65,14 @@ cmd_start() {
 
     docker compose up -d --build --remove-orphans
 
+    # -- Initialize EMQX Authentication ---------------------------------------
+    if [ -f "${SCRIPT_DIR}/init_emqx_auth.sh" ]; then
+        echo -e "\n${YELLOW}Provisioning EMQX authentication users...${NC}"
+        # Give EMQX dashboard HTTP listeners a brief moment to accept connections
+        sleep 5
+        bash "${SCRIPT_DIR}/init_emqx_auth.sh" || true
+    fi
+
     # -- Health wait ---------------------------------------------------------
     # docker compose up -d returns before containers are fully ready.
     # Poll /api/health through Nginx until backend responds (max 60s).
@@ -83,13 +94,15 @@ cmd_start() {
     fi
     # ------------------------------------------------------------------------
 
-    echo -e "\n${GREEN}✔ Services started! Current status:${NC}"
+    echo -e "\n${GREEN}✔ Unified services started! Current status:${NC}"
     docker compose ps
     echo -e "\nService endpoints:"
     echo -e "  • Web Dashboard & API Proxy: ${BLUE}http://localhost:${web_port}${NC}"
-    echo -e "  • EMQX Dashboard:           ${BLUE}http://localhost:18083${NC} (admin)"
-    echo -e "  • MQTT Broker Port:         ${BLUE}localhost:1883${NC}"
-    echo -e "  • Backend Health Endpoint:  ${BLUE}http://localhost:${web_port}/api/health${NC}"
+    echo -e "  • Gateway Local EMQX:        ${BLUE}localhost:1883${NC} (Field nodes & simulator)"
+    echo -e "  • Gateway EMQX Dashboard:    ${BLUE}http://localhost:18083${NC} (admin)"
+    echo -e "  • Core Central EMQX (TLS):   ${BLUE}localhost:8883${NC}"
+    echo -e "  • Core EMQX Dashboard:       ${BLUE}http://localhost:18084${NC} (admin)"
+    echo -e "  • Backend Health Endpoint:   ${BLUE}http://localhost:${web_port}/api/health${NC}"
 }
 
 cmd_stop() {
@@ -164,6 +177,9 @@ case "${ACTION}" in
         ;;
     build)
         cmd_build
+        ;;
+    auth)
+        bash "${SCRIPT_DIR}/init_emqx_auth.sh"
         ;;
     clean)
         cmd_clean

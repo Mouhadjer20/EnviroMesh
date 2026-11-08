@@ -118,6 +118,8 @@ cmd_migrate() {
         run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/001_create_registry.sql" "Registry Migration"
         run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/001_create_telemetry.sql" "Telemetry Migration"
         run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/003_add_gateway_metadata.sql" "Gateway Metadata & Dedup Migration"
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/004_add_active_user.sql" "Active User Migration"
+        run_sql_file "${PROJECT_ROOT}/raspberry_pi/core/database/migrations/005_require_password_rotation.sql" "Password Rotation Migration"
     else
         run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_registry.sql" "Registry Migration"
         run_sql_file "${PROJECT_ROOT}/raspberry_pi/db/migration/001_create_telemetry.sql" "Telemetry Migration"

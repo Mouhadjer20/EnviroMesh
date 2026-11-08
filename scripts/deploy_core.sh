@@ -72,6 +72,8 @@ MIGRATIONS=(
     "001_create_registry.sql"
     "001_create_telemetry.sql"
     "003_add_gateway_metadata.sql"
+    "004_add_active_user.sql"
+    "005_require_password_rotation.sql"
 )
 
 for mig in "${MIGRATIONS[@]}"; do
