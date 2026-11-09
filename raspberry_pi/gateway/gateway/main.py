@@ -68,13 +68,15 @@ def main() -> None:
     )
     ingestion_thread.start()
 
-    # LoRa receiver in background thread (exits gracefully on non-RPi)
-    if _lora_run is not None:
+    # LoRa receiver in background thread (disabled on GW2 or when ENABLE_LORA=false)
+    if config.ENABLE_LORA and _lora_run is not None:
         lora_thread = threading.Thread(
             target=_lora_run, name="lora-receiver", daemon=True
         )
         lora_thread.start()
         logger.info("LoRa receiver thread started")
+    else:
+        logger.info("LoRa receiver disabled (ENABLE_LORA=%s)", config.ENABLE_LORA)
 
     # Health monitor in background thread
     monitor_thread = threading.Thread(
