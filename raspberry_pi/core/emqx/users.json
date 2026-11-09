@@ -5,8 +5,28 @@
     "is_superuser": false
   },
   {
+    "user_id": "gw01_forwarder",
+    "password": "gw01_forward_secret",
+    "is_superuser": false
+  },
+  {
+    "user_id": "gw02_forwarder",
+    "password": "gw02_forward_secret",
+    "is_superuser": false
+  },
+  {
     "user_id": "enviromesh_backend",
     "password": "backend_secret_pass",
+    "is_superuser": false
+  },
+  {
+    "user_id": "admin",
+    "password": "admin123",
+    "is_superuser": true
+  },
+  {
+    "user_id": "monitor",
+    "password": "monitor123",
     "is_superuser": false
   }
 ]

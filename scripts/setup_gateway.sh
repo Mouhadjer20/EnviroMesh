@@ -47,29 +47,34 @@ mkdir -p "${GATEWAY_DIR}/data"
 mkdir -p "${GATEWAY_DIR}/emqx"
 echo "  -> Directories verified."
 
-# 4. Check Environment File
+# 4. Check Environment File (Single Centralized .env)
 echo "[4/6] Checking .env configuration..."
-if [[ ! -f "${GATEWAY_DIR}/.env" ]]; then
-    if [[ -f "${GATEWAY_DIR}/.env.example" ]]; then
-        echo "Copying .env.example to .env..."
-        cp "${GATEWAY_DIR}/.env.example" "${GATEWAY_DIR}/.env"
-        echo "IMPORTANT: Generated ${GATEWAY_DIR}/.env. Please edit it with your passwords and RPi 2 IP!"
-    else
-        echo "ERROR: .env.example not found in ${GATEWAY_DIR}"
-        exit 1
+ROOT_ENV="${SCRIPT_DIR}/../.env"
+if [[ ! -f "${ROOT_ENV}" ]]; then
+    if [[ -f "${SCRIPT_DIR}/../.env.example" ]]; then
+        echo "Creating root .env from .env.example..."
+        cp "${SCRIPT_DIR}/../.env.example" "${ROOT_ENV}"
     fi
-else
-    echo "  -> ${GATEWAY_DIR}/.env exists."
 fi
+ln -sf ../../.env "${GATEWAY_DIR}/.env"
+echo "  -> Linked ${GATEWAY_DIR}/.env to central root .env"
 
 # 5. Check CA Certificate for TLS connection to RPi 2
 echo "[5/6] Checking TLS CA certificate..."
 if [[ ! -f "${GATEWAY_DIR}/certs/core-ca.crt" ]]; then
+    if [[ -f "${SCRIPT_DIR}/../certs/ca.crt" ]]; then
+        cp "${SCRIPT_DIR}/../certs/ca.crt" "${GATEWAY_DIR}/certs/core-ca.crt"
+        echo "  -> Copied CA certificate from certs/ca.crt to ${GATEWAY_DIR}/certs/core-ca.crt"
+    elif [[ -f "${SCRIPT_DIR}/generate_certs.sh" ]]; then
+        bash "${SCRIPT_DIR}/generate_certs.sh" >/dev/null 2>&1 || true
+    fi
+fi
+if [[ -f "${GATEWAY_DIR}/certs/core-ca.crt" ]]; then
+    echo "  -> core-ca.crt certificate verified."
+else
     echo "WARNING: ${GATEWAY_DIR}/certs/core-ca.crt is missing!"
     echo "  Copy the CA certificate generated on RPi 2 to:"
     echo "  ${GATEWAY_DIR}/certs/core-ca.crt"
-else
-    echo "  -> core-ca.crt certificate found."
 fi
 
 # 6. Check EMQX ACL file

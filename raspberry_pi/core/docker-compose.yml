@@ -32,13 +32,19 @@ services:
       EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_DASHBOARD_USERNAME}"
       EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_DASHBOARD_PASSWORD}"
       EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE}"
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__ENABLE: "${EMQX_AUTH_ENABLED:-true}"
+      EMQX_AUTHORIZATION__NO_MATCH: "${EMQX_ACL_NO_MATCH:-deny}"
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:-false}"
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE: "${MQTT_TLS_ENABLED:-true}"
     ports:
       # MQTT over TLS — reachable by RPi 1 gateway
       - "0.0.0.0:8883:8883"
-      # Plain MQTT — internal only (backend subscriber on Docker network)
-      - "127.0.0.1:1883:1883"
-      # EMQX dashboard — localhost only
-      - "127.0.0.1:${EMQX_DASHBOARD_PORT:-18083}:18083"
+      # Plain MQTT — reachable on LAN segment
+      - "0.0.0.0:1883:1883"
+      # EMQX dashboard — 0.0.0.0 (accessible across LAN)
+      - "${EMQX_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_DASHBOARD_PORT:-18083}:18083"
     volumes:
       - emqx_core_data:/opt/emqx/data
       - emqx_core_log:/opt/emqx/log

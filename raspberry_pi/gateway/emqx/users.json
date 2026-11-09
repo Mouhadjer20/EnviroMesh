@@ -38,6 +38,21 @@
     "user_id": "g43",
     "password": "node_secret_g43",
     "is_superuser": false
+  },
+  {
+    "user_id": "admin",
+    "password": "admin123",
+    "is_superuser": true
+  },
+  {
+    "user_id": "enviromesh_backend",
+    "password": "backend_secret_pass",
+    "is_superuser": false
+  },
+  {
+    "user_id": "monitor",
+    "password": "monitor123",
+    "is_superuser": false
   }
 ]
 

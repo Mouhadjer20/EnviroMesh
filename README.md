@@ -78,11 +78,14 @@
 
 ## 2. Final Architecture
 
-The platform is split cleanly across two dedicated Raspberry Pi 4 Model B single-board computers:
+The platform is designed to scale across multiple edge field gateways reporting to a central processing core:
 
-### RPi 1 — Edge Gateway (`192.168.1.20`)
+### Field Edge Gateways
+EnviroMesh supports multiple distributed gateways across different physical locations or network subnets:
+- **RPi 1 / Gateway 1 (`GW01` — `192.168.1.20`)**: Primary edge gateway.
+- **RPi 1 / Gateway 2 (`GW02` — `192.168.1.30`)**: Secondary edge gateway for expanded warehouse coverage.
 - **LoRa Receiver**: Direct SPI communication with the SX1278 RA-02 transceiver at 433 MHz.
-- **Local EMQX Broker**: Lightweight MQTT 5.x broker listening on port 1883 for local Wi-Fi ESP32 nodes.
+- **Local EMQX Broker**: Lightweight MQTT 5.x broker listening on port 1883 for local Wi-Fi ESP32 nodes. Dashboard bound to `0.0.0.0:18083` for full LAN administration.
 - **Telemetry Ingestion & Normalizer**: Extracts raw fields, validates constraints, computes a deterministic UUIDv5 message identifier, and normalizes payloads into a uniform JSON schema.
 - **Signal Quality Telemetry**: Attaches hardware RSSI and SNR to received LoRa packets.
 - **SQLite Persistent Queue**: FIFO buffer ensuring durability across reboots and network partitions.
@@ -90,7 +93,7 @@ The platform is split cleanly across two dedicated Raspberry Pi 4 Model B single
 - **Health Monitor**: Periodically tracks queue depth, buffer utilization, and subsystem liveness.
 
 ### RPi 2 — Central Core (`192.168.1.5`)
-- **Central EMQX Broker**: Production MQTT 5.x broker listening on port 8883 (TLS required for RPi 1 forwarder) and internal port 1883 for local backend subscribers.
+- **Central EMQX Broker**: Production MQTT 5.x broker listening on port 8883 (TLS required for Gateway forwarders) and internal port 1883 for local backend subscribers. Dashboard bound to `0.0.0.0:18083` (or `18084` in unified mode).
 - **FastAPI Telemetry Subscriber**: Consumes forwarded telemetry, validates payloads, and manages transactional insertion.
 - **Deduplication Engine**: Enforces at-most-once storage via the `processed_messages` table.
 - **PostgreSQL 16 + TimescaleDB 2.17**: Partitioned time-series database for multi-year telemetry analytics (internal network only; port 5432 is unexposed to LAN).
@@ -205,12 +208,14 @@ The platform is split cleanly across two dedicated Raspberry Pi 4 Model B single
 
 | Host      | Service            | Port  | Protocol | Binding / Scope  | Purpose                                |
 | --------- | ------------------ | ----- | -------- | ---------------- | -------------------------------------- |
-| **RPi 1** | Local EMQX         | 1883  | TCP      | `0.0.0.0` (LAN)  | Ingestion from Wi-Fi ESP32 nodes       |
-| **RPi 1** | EMQX Dashboard     | 18083 | TCP      | `127.0.0.1`      | Local broker administration            |
+| **RPi 1 (GW1)** | Local EMQX         | 1883  | TCP      | `0.0.0.0` (LAN)  | Ingestion from Wi-Fi ESP32 nodes (192.168.1.20) |
+| **RPi 1 (GW1)** | EMQX Dashboard     | 18083 | TCP      | `0.0.0.0` (LAN)  | Gateway 1 broker web administration    |
+| **RPi 1 (GW2)** | Local EMQX         | 1883  | TCP      | `0.0.0.0` (LAN)  | Ingestion from Wi-Fi ESP32 nodes (192.168.1.30) |
+| **RPi 1 (GW2)** | EMQX Dashboard     | 18083 | TCP      | `0.0.0.0` (LAN)  | Gateway 2 broker web administration    |
 | **RPi 1** | SSH                | 22    | TCP      | LAN / Management | Linux maintenance                      |
-| **RPi 2** | Central EMQX TLS   | 8883  | TCP/TLS  | `0.0.0.0` (LAN)  | Ingestion from RPi 1 Forwarder         |
-| **RPi 2** | Central EMQX Local | 1883  | TCP      | Docker Network   | FastAPI subscriber ingestion           |
-| **RPi 2** | EMQX Dashboard     | 18083 | TCP      | `127.0.0.1`      | Central broker administration          |
+| **RPi 2** | Central EMQX TLS   | 8883  | TCP/TLS  | `0.0.0.0` (LAN)  | Ingestion from Gateway forwarders      |
+| **RPi 2** | Central EMQX Plain | 1883  | TCP      | `0.0.0.0` (LAN)  | Plain debugging & internal subscriber  |
+| **RPi 2** | EMQX Dashboard     | 18083 | TCP      | `0.0.0.0` (LAN)  | Central broker web administration      |
 | **RPi 2** | Nginx Web Server   | 8080  | TCP      | `0.0.0.0` (LAN)  | React Dashboard & REST API access      |
 | **RPi 2** | FastAPI Backend    | 8000  | TCP      | Docker Network   | REST API & WebSockets (Internal)       |
 | **RPi 2** | TimescaleDB        | 5432  | TCP      | Docker Network   | Relational time-series data (Internal) |
@@ -239,26 +244,103 @@ The platform is split cleanly across two dedicated Raspberry Pi 4 Model B single
 
 ---
 
-## 7. RPi 1 Gateway Setup & Operation
+## 7. Environment Configuration: Global Main vs Divided Partition `.env`
+
+EnviroMesh provides complete architectural flexibility for environment configuration:
+
+1. **Global Unified Mode (Main `.env`)**:
+   - The root `.env` (copied from `.env.example`) serves as the central configuration for all services, scripts, and local testing tools.
+   - When deploying on a single server, dev laptop, or testing both gateways together, the root `.env` configures both Gateway 1, Gateway 2, and Core stacks from a single file.
+
+2. **Divided Partition Mode**:
+   - When deploying to physically separate Raspberry Pi hardware on your LAN:
+     - **RPi 2 (Core Server)**: Uses `raspberry_pi/core/.env` (template: `raspberry_pi/core/.env.example`).
+     - **RPi 1 (Gateway 1 - `GW01`)**: Uses `raspberry_pi/gateway/.env` (template: `raspberry_pi/gateway/.env.gw1.example`).
+     - **RPi 1 (Gateway 2 - `GW02`)**: Uses `raspberry_pi/gateway/.env` (template: `raspberry_pi/gateway/.env.gw2.example`).
+
+---
+
+## 8. Security Switch: Turn MQTT Auth & TLS ON / OFF ("Button Toggle")
+
+You can toggle MQTT authentication and TLS encryption on or off without manually editing configuration files:
+
+```bash
+# Toggle via dedicated controller
+./scripts/toggle_security.sh --auth on       # Turn Authentication ON
+./scripts/toggle_security.sh --auth off      # Turn Authentication OFF (Anonymous mode)
+./scripts/toggle_security.sh --tls on        # Turn TLS Encryption ON (Port 8883)
+./scripts/toggle_security.sh --tls off       # Turn TLS Encryption OFF (Port 1883)
+./scripts/toggle_security.sh --status        # Show current security configuration
+
+# Interactive Toggle Menu
+./scripts/toggle_security.sh
+
+# Or via docker_control.sh
+./scripts/docker_control.sh auth on
+./scripts/docker_control.sh auth off
+./scripts/docker_control.sh tls on
+./scripts/docker_control.sh tls off
+./scripts/docker_control.sh security
+```
+
+When Authentication is **OFF**:
+- EMQX allows anonymous connections without credential checks.
+- ACL rules default to `allow`, letting any client publish or subscribe.
+- No `✖ Failed to connect to broker (reason code: Not authorized)` errors.
+
+When Authentication is **ON**:
+- Built-in database verifies client credentials.
+- Strict ACL rules isolate nodes to their dedicated topics.
+- Pre-configured defaults (`gw_ingestion`, `gw_forwarder`, `gw01_forwarder`, `gw02_forwarder`, `enviromesh_backend`) ensure all internal services and scripts connect seamlessly.
+
+---
+
+## 9. RPi 1 Field Gateway Setup & Operation (GW01 & GW02)
 
 The gateway directory (`raspberry_pi/gateway/`) provides an independent deployment unit for RPi 1.
 
-### Configuration (`.env`)
+### Gateway 1 (`GW01` — `192.168.1.20`)
 ```bash
+cp raspberry_pi/gateway/.env.gw1.example raspberry_pi/gateway/.env
+cd raspberry_pi/gateway && docker compose up -d
+```
+
+### Gateway 2 (`GW02` — `192.168.1.30` — Wi-Fi Only, LoRa Disabled)
+Gateway 2 does not have an SX1278 transceiver (`ENABLE_LORA=false` in `.env`). It operates purely as a Wi-Fi MQTT ingestion gateway and forwards telemetry to Core:
+```bash
+cp raspberry_pi/gateway/.env.gw2.example raspberry_pi/gateway/.env
+cd raspberry_pi/gateway && docker compose up -d
+```
+
+### Local Multi-Gateway Simulation (Dual-Gateway)
+To run both Gateway 1 and Gateway 2 simultaneously on the same machine:
+```bash
+docker compose --profile dual-gateway up -d
+```
+
+### Gateway Configuration Reference (`.env`)
+```bash
+# Gateway Identity (GW01 for Gateway 1, GW02 for Gateway 2)
 GATEWAY_ID=GW01
 GATEWAY_LAN_IP=192.168.1.20
 
-# Local EMQX broker
+# Security Toggle
+MQTT_AUTH_ENABLED=true
+
+# Local EMQX Ingestion Broker (Dashboard reachable at 0.0.0.0:18083 across LAN)
 MQTT_BIND_IP=0.0.0.0
 MQTT_LOCAL_PORT=1883
 MQTT_LOCAL_USERNAME=gw_ingestion
-MQTT_LOCAL_PASSWORD=StrongLocalPassword123
+MQTT_LOCAL_PASSWORD=gw_ingest_secret
+EMQX_DASHBOARD_BIND_IP=0.0.0.0
+EMQX_DASHBOARD_PORT=18083
 
 # Target Core Server (RPi 2)
 MQTT_CORE_HOST=192.168.1.5
 MQTT_CORE_PORT=8883
+MQTT_CORE_USE_TLS=true
 MQTT_CORE_USERNAME=gw_forwarder
-MQTT_CORE_PASSWORD=StrongCorePassword456
+MQTT_CORE_PASSWORD=gw_forward_secret
 MQTT_CORE_CA=/app/certs/core-ca.crt
 
 # Queue & Forwarding Settings
@@ -268,16 +350,9 @@ FORWARD_RETRY_SECONDS=5
 LOG_LEVEL=INFO
 ```
 
-### Starting the Gateway
-```bash
-cd raspberry_pi/gateway
-./../../scripts/setup_gateway.sh
-./../../scripts/deploy_gateway.sh
-```
-
 ---
 
-## 8. RPi 2 Core Setup & Operation
+## 10. RPi 2 Core Setup & Operation
 
 The core directory (`raspberry_pi/core/`) provides the processing, database, backend, and dashboard stack.
 
@@ -288,19 +363,26 @@ LOG_LEVEL=INFO
 WEB_BIND_IP=0.0.0.0
 WEB_PORT=8080
 
+# Security Toggles
+MQTT_AUTH_ENABLED=true
+MQTT_TLS_ENABLED=true
+
+# Central EMQX Broker (Dashboard reachable at 0.0.0.0:18083 across LAN)
+EMQX_DASHBOARD_BIND_IP=0.0.0.0
 EMQX_DASHBOARD_PORT=18083
 EMQX_DASHBOARD_USERNAME=admin
-EMQX_DASHBOARD_PASSWORD=StrongAdminPassword789
+EMQX_DASHBOARD_PASSWORD=admin123
 
 MQTT_APP_USERNAME=enviromesh_backend
-MQTT_APP_PASSWORD=StrongBackendPassword101
+MQTT_APP_PASSWORD=backend_secret_pass
 
 POSTGRES_DB=enviromesh
 POSTGRES_USER=enviromesh_app
-POSTGRES_PASSWORD=StrongDatabasePassword202
+POSTGRES_PASSWORD=enviromesh_secret_db_pass
 
 CORE_LAN_IP=192.168.1.5
-GATEWAY_LAN_IP=192.168.1.20
+GATEWAY_1_LAN_IP=192.168.1.20
+GATEWAY_2_LAN_IP=192.168.1.30
 ```
 
 ### Starting the Core
@@ -338,49 +420,34 @@ CREATE INDEX IF NOT EXISTS idx_queue_attempts ON queue (attempts, created_at);
 
 ---
 
-## 10. TLS Certificate Setup
+## 11. Automated TLS Certificate Setup & PKI
 
 Inter-Pi communication requires a custom root Certificate Authority (CA) and an X.509 server certificate for RPi 2.
 
-### Step 1: Generate PKI on RPi 2
+### Automated Generation (Recommended)
+`install.sh` and `./scripts/generate_certs.sh` automatically provision all required certificates, directories (`certs/`, `raspberry_pi/gateway/certs/`, `raspberry_pi/core/emqx/certs/`), and Subject Alternative Names (SANs) for Core (`192.168.1.5`), Gateway 1 (`192.168.1.20`), Gateway 2 (`192.168.1.30`), and local addresses:
+
 ```bash
-cd raspberry_pi/core/emqx/certs
+# Run one-command certificate generation
+./scripts/generate_certs.sh
 
-# Generate CA
-openssl genrsa -out ca.key 4096
-openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt \
-    -subj "/C=FR/ST=IDF/L=Paris/O=EnviroMesh/CN=EnviroMesh-Root-CA"
-
-# Generate Server Key & CSR
-openssl genrsa -out server.key 2048
-openssl req -new -key server.key -out server.csr \
-    -subj "/C=FR/ST=IDF/L=Paris/O=EnviroMesh/CN=192.168.1.5"
-
-# SAN extension config
-cat > server_ext.cnf <<EOF
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-subjectAltName = @alt_names
-
-[alt_names]
-IP.1 = 192.168.1.5
-IP.2 = 127.0.0.1
-DNS.1 = rpi2-core.local
-DNS.2 = localhost
-EOF
-
-# Sign Server Certificate
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out server.crt -days 3650 -sha256 -extfile server_ext.cnf
-
-chmod 600 ca.key server.key
-chmod 644 ca.crt server.crt
+# Force regeneration if IPs change
+./scripts/generate_certs.sh --force
 ```
 
-### Step 2: Copy CA Certificate to RPi 1
+This creates:
+- Root CA: `certs/ca.crt` & `raspberry_pi/core/emqx/certs/ca.crt`
+- Server Certificate: `certs/server.crt` & `raspberry_pi/core/emqx/certs/server.crt`
+- Gateway Trust Bundle: `certs/core-ca.crt` & `raspberry_pi/gateway/certs/core-ca.crt`
+
+### Manual Multi-Pi Certificate Transfer (Distributed Physical Hardware)
+If Gateway 1 and Gateway 2 are on separate physical Raspberry Pis:
 ```bash
+# Copy CA certificate from RPi 2 to Gateway 1 (192.168.1.20)
 scp raspberry_pi/core/emqx/certs/ca.crt pi@192.168.1.20:/home/pi/enviromesh/raspberry_pi/gateway/certs/core-ca.crt
+
+# Copy CA certificate from RPi 2 to Gateway 2 (192.168.1.30)
+scp raspberry_pi/core/emqx/certs/ca.crt pi@192.168.1.30:/home/pi/enviromesh/raspberry_pi/gateway/certs/core-ca.crt
 ```
 
 ---

@@ -39,23 +39,27 @@ firmware/
 └── nodes/
     ├── node_g11/                      # Group 1 — LoRa Environmental Node [IMPLEMENTED]
     │   └── src/
-    │       └── main.ino               # 423 lines: MQ-2 (NVS calibration), DHT11, Water, Ra-02 LoRa
+    │       └── main.ino               # MQ-2 (NVS calibration), DHT11, Water, Ra-02 LoRa
     ├── node_g41/                      # Group 4 — LoRa Environmental Node [IMPLEMENTED]
-    │   └── src/main/
-    │       └── main.ino               # 286 lines: MQ-2, DHT11, Water, LoRa 433 MHz, Compact JSON (<250B)
-    ├── node_g42/                      # Group 4 — Wi-Fi MQTT Client Node [IMPLEMENTED / TEST]
-    │   └── src/main/
-    │       └── main.ino               # 98 lines: ESP32 Wi-Fi + PubSubClient MQTT publisher
+    │   └── src/
+    │       └── main.ino               # MQ-2, DHT11, Water, LoRa 433 MHz, Compact JSON (<250B)
     ├── node_g43/                      # Group 4 — Simulated Telemetry MQTT Node [IMPLEMENTED / TEST]
     │   └── src/
-    │       ├── main.ino               # 105 lines: Clean single-folder layout, schema-compliant JSON
+    │       ├── main.ino               # Clean single-folder layout, schema-compliant JSON
     │       └── secrets.h.example      # Wi-Fi & MQTT credentials template
-    ├── node_g31/                      # Group 3 — Wi-Fi Environmental Node [PHASE 3 IN PROGRESS]
+    ├── node_g31/                      # Group 3 — Wi-Fi Environmental Node [IMPLEMENTED]
     │   └── src/
-    │       └── main.ini               # Specification stub: BMP280, MQ-2, Water leak, MQTT over Wi-Fi
+    │       ├── main.ino               # BMP280, MQ-2, Water leak, MQTT over Wi-Fi
+    │       └── secrets.example.h
+    ├── node_g51/                      # Group 5 — ESP32 Sensor Hub Node [IMPLEMENTED]
+    │   └── src/
+    │       ├── esp32_hub.ino          # Multi-sensor ingestion hub
+    │       └── secrets.example.h
     └── node_g61_servo/                # Group 6 — Wi-Fi Servo & Motion Node [IMPLEMENTED]
         └── src/
-            ├── main.ino               # 896 lines: MQ-2, DHT11, Water, PIR, SG90 Servo PWM, NTP UTC sync
+            ├── main.ino               # MQ-2, DHT11, Water, PIR, SG90 Servo PWM, NTP UTC sync
+            ├── comms.ino              # MQTT Wi-Fi communications handler
+            ├── sensors.ino            # Multi-sensor data acquisition
             └── secrets.h.example      # Wi-Fi & MQTT credentials template
 ```
 
@@ -65,12 +69,12 @@ firmware/
 
 | Node             | Device ID | Group | Sensors / Actuators                            | Primary Transport | Destination           | Status               |
 | ---------------- | --------- | ----- | ---------------------------------------------- | ----------------- | --------------------- | -------------------- |
-| `node_g11`       | `G11`     | G1    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | RPi (LoRa Gateway)    | **Production-Ready** |
-| `node_g41`       | `G41`     | G4    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | RPi (LoRa Gateway)    | **Production-Ready** |
-| `node_g42`       | `G42`     | G4    | Wi-Fi Station                                  | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Test Harness**     |
-| `node_g43`       | `G43`     | G4    | Synthetic Metrics                              | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Test Harness**     |
-| `node_g31`       | `G31`     | G3    | BMP280 (Pressure/Temp), MQ-2 (Gas), Water Leak | Wi-Fi / MQTT      | EMQX Broker (`:1883`) | **Phase 3.1**        |
-| `node_g61_servo` | `G61`     | G6    | MQ-2, DHT11, Water, PIR Motion, Micro Servo 9g | Wi-Fi MQTT        | EMQX (`:1883`)        | **Operational**      |
+| `node_g11`       | `G11`     | G1    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | Gateway 1 or 2 (SX1278 SPI) | **Production-Ready** |
+| `node_g41`       | `G41`     | G4    | MQ-2 (Gas/Smoke), DHT11 (Temp/Hum), Water Leak | LoRa 433 MHz      | Gateway 1 or 2 (SX1278 SPI) | **Production-Ready** |
+| `node_g31`       | `G31`     | G3    | BMP280 (Pressure/Temp), MQ-2 (Gas), Water Leak | Wi-Fi / MQTT      | Gateway EMQX (`:1883`)      | **Production-Ready** |
+| `node_g43`       | `G43`     | G4    | Synthetic Metrics                              | Wi-Fi / MQTT      | Gateway EMQX (`:1883`)      | **Test Harness**     |
+| `node_g51`       | `G51`     | G5    | Multi-sensor Hub                               | Wi-Fi / MQTT      | Gateway EMQX (`:1883`)      | **Production-Ready** |
+| `node_g61_servo` | `G61`     | G6    | MQ-2, DHT11, Water, PIR Motion, Micro Servo 9g | Wi-Fi MQTT        | Gateway EMQX (`:1883`)      | **Operational**      |
 
 ---
 

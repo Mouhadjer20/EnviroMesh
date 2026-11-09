@@ -32,23 +32,27 @@ mkdir -p "${CORE_DIR}/database/migrations"
 mkdir -p "${CORE_DIR}/database/seeds"
 echo "  -> Directories verified."
 
-# 3. Check Environment File
+# 3. Check Environment File (Single Centralized .env)
 echo "[3/5] Checking .env configuration..."
-if [[ ! -f "${CORE_DIR}/.env" ]]; then
-    if [[ -f "${CORE_DIR}/.env.example" ]]; then
-        echo "Copying .env.example to .env..."
-        cp "${CORE_DIR}/.env.example" "${CORE_DIR}/.env"
-        echo "IMPORTANT: Generated ${CORE_DIR}/.env. Please edit it with strong passwords!"
-    else
-        echo "ERROR: .env.example not found in ${CORE_DIR}"
-        exit 1
+ROOT_ENV="${SCRIPT_DIR}/../.env"
+if [[ ! -f "${ROOT_ENV}" ]]; then
+    if [[ -f "${SCRIPT_DIR}/../.env.example" ]]; then
+        echo "Creating root .env from .env.example..."
+        cp "${SCRIPT_DIR}/../.env.example" "${ROOT_ENV}"
     fi
-else
-    echo "  -> ${CORE_DIR}/.env exists."
 fi
+ln -sf ../../.env "${CORE_DIR}/.env"
+echo "  -> Linked ${CORE_DIR}/.env to central root .env"
 
 # 4. Check TLS Certificates
 echo "[4/5] Checking TLS certificates..."
+if [[ ! -f "${CORE_DIR}/emqx/certs/server.crt" ]]; then
+    if [[ -f "${SCRIPT_DIR}/generate_certs.sh" ]]; then
+        echo "Generating TLS certificates via generate_certs.sh..."
+        bash "${SCRIPT_DIR}/generate_certs.sh" || true
+    fi
+fi
+
 MISSING_CERTS=0
 for cert in ca.crt server.crt server.key; do
     if [[ ! -f "${CORE_DIR}/emqx/certs/${cert}" ]]; then
@@ -61,7 +65,7 @@ if [[ ${MISSING_CERTS} -eq 1 ]]; then
     echo ""
     echo "TLS certificates are missing. Refer to docs/certificate-setup.md to generate them."
 else
-    echo "  -> TLS certificates are present."
+    echo "  -> TLS certificates are verified."
 fi
 
 # 5. Check migration scripts

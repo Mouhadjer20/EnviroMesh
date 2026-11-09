@@ -22,16 +22,18 @@ This directory contains command-line utilities, test harnesses, and simulators d
 
 | Script | Mode | Description |
 |---|---|---|
+| [`toggle_security.sh`](toggle_security.sh) | **Security Switch** | Turn MQTT Authentication (`--auth on/off`) and TLS Encryption (`--tls on/off`) on or off via CLI or interactive menu ("button turn/off"). |
+| [`generate_certs.sh`](generate_certs.sh) | **PKI & TLS** | Automatically provisions CA and Server certificates with SANs for Core (`.5`), GW1 (`.20`), and GW2 (`.30`) in `certs/` and service folders. |
 | [`run_tests.py`](run_tests.py) | **Test Runner** | Automated runner for syntax verification, end-to-end pipeline simulations, simulator checks, and unit tests. |
 | [`simulate_pipeline.py`](simulate_pipeline.py) | **Simulator** | Hardware-free pipeline test: Field Nodes -> Gateway Validation/Normalization -> SQLite WAL Queue -> Network Recovery -> Core Deduplication. |
-| [`simulate_telemetry.py`](simulate_telemetry.py) | **Simulator** | Synthetic telemetry generator for field nodes (`G11`, `G41`, `G31`, `G61`) over MQTT. Supports anomaly injection (gas leak, fire, water leak). |
+| [`simulate_telemetry.py`](simulate_telemetry.py) | **Simulator** | Synthetic telemetry generator for field nodes (`G11`, `G41`, `G31`, `G61`) over MQTT. Supports anomaly injection and `--no-auth`. |
 | [`lora_packet_inject.py`](lora_packet_inject.py) | **Test Harness** | LoRa pipeline test harness; validates raw & parsed LoRa packets without physical SX1278 hardware. |
-| [`docker_control.sh`](docker_control.sh) | **Unified Stack** | Controls the unified single-device Docker Compose stack (Gateway + Core: `emqx-local`, `gateway`, `emqx-core`, `timescaledb`, `backend`, `dashboard`, `nginx`). |
+| [`docker_control.sh`](docker_control.sh) | **Unified Stack** | Controls the unified single-device Docker Compose stack. Supports `auth`, `tls`, `security`, `certs`, `start`, `stop`, `clean`. |
 | [`check_health.py`](check_health.py) | **Diagnostics** | Unified health diagnostic tool checking all single-device endpoints (Nginx, FastAPI, Gateway EMQX, Core EMQX, TimescaleDB). |
-| [`mqtt_monitor.py`](mqtt_monitor.py) | **Monitor** | Real-time terminal dashboard subscribing to MQTT topics (`enviromesh/#`), displaying live formatted readings. |
+| [`mqtt_monitor.py`](mqtt_monitor.py) | **Monitor** | Real-time terminal dashboard subscribing to MQTT topics (`enviromesh/#`), displaying live formatted readings with auto-authentication. |
 | [`db_manage.sh`](db_manage.sh) | **Database** | PostgreSQL & TimescaleDB manager: migrations, reference data seeding, verification queries, interactive shell. |
 | [`backup_database.sh`](backup_database.sh) | **Maintenance** | Creates timestamped and rotated PostgreSQL backups. |
-| [`setup_gateway.sh`](setup_gateway.sh) | **2-Pi Setup** | Configures RPi 1 Gateway environment, permissions, and service dependencies. |
+| [`setup_gateway.sh`](setup_gateway.sh) | **2-Pi Setup** | Configures RPi 1 Gateway environment, permissions, and service dependencies for GW1 (.20) or GW2 (.30). |
 | [`setup_core.sh`](setup_core.sh) | **2-Pi Setup** | Configures RPi 2 Core environment, database directories, and permissions. |
 | [`deploy_gateway.sh`](deploy_gateway.sh) | **2-Pi Deploy** | Deploys RPi 1 Gateway services via Docker Compose. |
 | [`deploy_core.sh`](deploy_core.sh) | **2-Pi Deploy** | Deploys RPi 2 Core services via Docker Compose with zero-loss volume persistence. |

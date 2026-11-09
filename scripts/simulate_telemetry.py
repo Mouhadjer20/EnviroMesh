@@ -20,16 +20,16 @@ import random
 import sys
 import time
 
-# Try loading .env from project root
+# Try loading environment from root or partition files
 ROOT_DIR = Path(__file__).resolve().parents[1]
-ENV_FILE = ROOT_DIR / ".env"
-
-if ENV_FILE.exists():
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(ENV_FILE)
-    except ImportError:
-        pass
+for env_candidate in [ROOT_DIR / ".env", ROOT_DIR / "raspberry_pi" / "core" / ".env", ROOT_DIR / "raspberry_pi" / "gateway" / ".env"]:
+    if env_candidate.exists():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(env_candidate)
+            break
+        except ImportError:
+            pass
 
 try:
     import paho.mqtt.client as mqtt
@@ -170,13 +170,18 @@ def main():
     )
     parser.add_argument(
         "--username",
-        default=os.getenv("MQTT_APP_USERNAME", "enviromesh_backend"),
-        help="MQTT client username",
+        default=None,
+        help="MQTT client username (defaults to node user, e.g. g11 or gw_ingestion)",
     )
     parser.add_argument(
         "--password",
-        default=os.getenv("MQTT_APP_PASSWORD", ""),
-        help="MQTT client password",
+        default=None,
+        help="MQTT client password (defaults to matching node secret)",
+    )
+    parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Connect without credentials (anonymous mode)",
     )
     parser.add_argument(
         "--topic-prefix",
@@ -219,8 +224,22 @@ def main():
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"enviromesh-simulator-{random.randint(1000, 9999)}",
         )
-        if args.username and args.password:
-            client.username_pw_set(args.username, args.password)
+
+        auth_enabled_env = os.getenv("MQTT_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
+
+        if not args.no_auth and auth_enabled_env:
+            sim_user = args.username
+            sim_pass = args.password
+            if not sim_user:
+                # If a specific device is targeted, use its node account; otherwise gw_ingestion
+                if args.device != "all":
+                    sim_user = args.device.lower()
+                    sim_pass = f"node_secret_{sim_user}"
+                else:
+                    sim_user = os.getenv("MQTT_LOCAL_USERNAME", "gw_ingestion")
+                    sim_pass = os.getenv("MQTT_LOCAL_PASSWORD", "gw_ingest_secret")
+            if sim_user:
+                client.username_pw_set(sim_user, sim_pass)
 
         logger.info("Connecting to MQTT broker %s:%d...", args.host, args.port)
         try:

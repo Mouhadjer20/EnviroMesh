@@ -15,14 +15,15 @@ import sys
 import time
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-ENV_FILE = ROOT_DIR / ".env"
-
-if ENV_FILE.exists():
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(ENV_FILE)
-    except ImportError:
-        pass
+# Try loading environment from root or partition files
+for env_candidate in [ROOT_DIR / ".env", ROOT_DIR / "raspberry_pi" / "core" / ".env", ROOT_DIR / "raspberry_pi" / "gateway" / ".env"]:
+    if env_candidate.exists():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(env_candidate)
+            break
+        except ImportError:
+            pass
 
 try:
     import paho.mqtt.client as mqtt
@@ -110,13 +111,18 @@ def main():
     )
     parser.add_argument(
         "--username",
-        default=os.getenv("MQTT_APP_USERNAME", "enviromesh_backend"),
-        help="MQTT client username",
+        default=None,
+        help="MQTT client username (auto-detected based on port if omitted)",
     )
     parser.add_argument(
         "--password",
-        default=os.getenv("MQTT_APP_PASSWORD", ""),
-        help="MQTT client password",
+        default=None,
+        help="MQTT client password (auto-detected if omitted)",
+    )
+    parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Disable authentication and connect anonymously",
     )
     parser.add_argument(
         "--topic",
@@ -138,8 +144,26 @@ def main():
         userdata={"topic": args.topic, "verbose": args.verbose},
     )
 
-    if args.username and args.password:
-        client.username_pw_set(args.username, args.password)
+    auth_enabled_env = os.getenv("MQTT_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
+    
+    if not args.no_auth and auth_enabled_env:
+        username = args.username
+        password = args.password
+        
+        # Auto-detect sensible defaults if not passed explicitly
+        if not username:
+            if args.port == 1883:
+                username = os.getenv("MQTT_LOCAL_USERNAME", "gw_ingestion")
+                password = os.getenv("MQTT_LOCAL_PASSWORD", "gw_ingest_secret")
+            else:
+                username = os.getenv("MQTT_APP_USERNAME", "enviromesh_backend")
+                password = os.getenv("MQTT_APP_PASSWORD", "backend_secret_pass")
+        else:
+            if password is None:
+                password = os.getenv("MQTT_APP_PASSWORD", os.getenv("MQTT_LOCAL_PASSWORD", "admin123"))
+
+        if username:
+            client.username_pw_set(username, password)
 
     client.on_connect = on_connect
     client.on_message = on_message

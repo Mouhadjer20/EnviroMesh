@@ -8,10 +8,16 @@ in the gateway root is loaded automatically by Docker Compose.
 import os
 
 # ---------------------------------------------------------------------------
-# Gateway identity
+# Gateway identity (GW01 on .20 or GW02 on .30)
 # ---------------------------------------------------------------------------
 GATEWAY_ID: str = os.getenv("GATEWAY_ID", "GW01")
 GATEWAY_LAN_IP: str = os.getenv("GATEWAY_LAN_IP", "192.168.1.20")
+
+# Hardware features (Gateway 1 has LoRa SX1278; Gateway 2 is Wi-Fi only)
+ENABLE_LORA: bool = os.getenv("ENABLE_LORA", "true").lower() in ("true", "1", "yes")
+
+# Security toggles
+MQTT_AUTH_ENABLED: bool = os.getenv("MQTT_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # Local EMQX broker (on this RPi 1)
@@ -19,16 +25,16 @@ GATEWAY_LAN_IP: str = os.getenv("GATEWAY_LAN_IP", "192.168.1.20")
 MQTT_LOCAL_HOST: str = os.getenv("MQTT_LOCAL_HOST", "localhost")
 MQTT_LOCAL_PORT: int = int(os.getenv("MQTT_LOCAL_PORT", "1883"))
 MQTT_LOCAL_USERNAME: str = os.getenv("MQTT_LOCAL_USERNAME", "gw_ingestion")
-MQTT_LOCAL_PASSWORD: str = os.getenv("MQTT_LOCAL_PASSWORD", "")
+MQTT_LOCAL_PASSWORD: str = os.getenv("MQTT_LOCAL_PASSWORD", "gw_ingest_secret")
 
 # ---------------------------------------------------------------------------
 # Core EMQX broker (on RPi 2) — TLS enabled by default on port 8883
 # ---------------------------------------------------------------------------
 MQTT_CORE_HOST: str = os.getenv("MQTT_CORE_HOST", "192.168.1.5")
 MQTT_CORE_PORT: int = int(os.getenv("MQTT_CORE_PORT", "8883"))
-MQTT_CORE_USE_TLS: bool = os.getenv("MQTT_CORE_USE_TLS", "true").lower() in ("true", "1", "yes")
+MQTT_CORE_USE_TLS: bool = os.getenv("MQTT_CORE_USE_TLS", os.getenv("MQTT_TLS_ENABLED", "true")).lower() in ("true", "1", "yes")
 MQTT_CORE_USERNAME: str = os.getenv("MQTT_CORE_USERNAME", "gw_forwarder")
-MQTT_CORE_PASSWORD: str = os.getenv("MQTT_CORE_PASSWORD", "")
+MQTT_CORE_PASSWORD: str = os.getenv("MQTT_CORE_PASSWORD", "gw_forward_secret")
 # Path to the CA certificate that signed the core EMQX server certificate
 MQTT_CORE_CA: str = os.getenv("MQTT_CORE_CA", "/app/certs/core-ca.crt")
 

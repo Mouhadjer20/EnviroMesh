@@ -273,9 +273,14 @@ def process_packet(raw_payload: str) -> None:
 def run() -> None:
     """Run the LoRa receive loop until interrupted.
 
-    On non-RPi platforms this function logs a warning and returns immediately
-    so the MQTT ingestion and forwarding services continue unaffected.
+    On non-RPi platforms or when ENABLE_LORA is false (e.g. Gateway 2), this function
+    logs and returns immediately so the MQTT ingestion and forwarding services continue.
     """
+    from . import config
+    if not getattr(config, "ENABLE_LORA", True):
+        logger.info("LoRa receiver explicitly disabled via ENABLE_LORA=false. Exiting receiver.")
+        return
+
     if not _spidev_available or get_spi() is None:
         logger.warning(
             "LoRa hardware not available on this platform (%s) — receiver exiting.",

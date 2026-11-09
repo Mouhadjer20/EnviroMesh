@@ -16,8 +16,17 @@ if [ -f "${PROJECT_ROOT}/.env" ]; then
     export $(grep -v '^#' "${PROJECT_ROOT}/.env" | xargs -0) 2>/dev/null || true
 fi
 
-LOCAL_API="http://127.0.0.1:${EMQX_LOCAL_DASHBOARD_PORT:-18083}/api/v5"
-CORE_API="http://127.0.0.1:${EMQX_CORE_DASHBOARD_PORT:-18084}/api/v5"
+# Support both Unified setup and Standalone Core/Gateway setups
+LOCAL_PORT="${EMQX_LOCAL_DASHBOARD_PORT:-18083}"
+CORE_PORT="${EMQX_CORE_DASHBOARD_PORT:-18084}"
+
+# If running on standalone Core Pi, the dashboard is typically on port 18083
+if [ -f "${PROJECT_ROOT}/raspberry_pi/core/.env" ] && [ ! -f "${PROJECT_ROOT}/.env" ]; then
+    CORE_PORT="${EMQX_DASHBOARD_PORT:-18083}"
+fi
+
+LOCAL_API="http://127.0.0.1:${LOCAL_PORT}/api/v5"
+CORE_API="http://127.0.0.1:${CORE_PORT}/api/v5"
 
 LOCAL_AUTH="${EMQX_LOCAL_DASHBOARD_USERNAME:-admin}:${EMQX_LOCAL_DASHBOARD_PASSWORD:-admin123}"
 CORE_AUTH="${EMQX_CORE_DASHBOARD_USERNAME:-admin}:${EMQX_CORE_DASHBOARD_PASSWORD:-admin123}"
@@ -57,14 +66,19 @@ echo "=== Initializing EMQX Authentication ==="
 echo "Configuring Gateway Local EMQX (localhost:${EMQX_LOCAL_DASHBOARD_PORT:-18083})..."
 add_emqx_user "${LOCAL_API}" "${LOCAL_AUTH}" "${MQTT_LOCAL_USERNAME:-gw_ingestion}" "${MQTT_LOCAL_PASSWORD:-gw_ingest_secret}" "emqx-local"
 
-# Node accounts for local EMQX
+# Node and diagnostic accounts for local EMQX
 for node in g11 g31 g41 g51 g61 g42 g43; do
     add_emqx_user "${LOCAL_API}" "${LOCAL_AUTH}" "${node}" "node_secret_${node}" "emqx-local"
 done
+add_emqx_user "${LOCAL_API}" "${LOCAL_AUTH}" "enviromesh_backend" "backend_secret_pass" "emqx-local"
+add_emqx_user "${LOCAL_API}" "${LOCAL_AUTH}" "monitor" "monitor123" "emqx-local"
 
-echo "Configuring Core Central EMQX (localhost:${EMQX_CORE_DASHBOARD_PORT:-18084})..."
+echo "Configuring Core Central EMQX (localhost:${CORE_PORT})..."
 add_emqx_user "${CORE_API}" "${CORE_AUTH}" "${MQTT_CORE_USERNAME:-gw_forwarder}" "${MQTT_CORE_PASSWORD:-gw_forward_secret}" "emqx-core"
+add_emqx_user "${CORE_API}" "${CORE_AUTH}" "gw01_forwarder" "${MQTT_CORE_1_PASSWORD:-gw01_forward_secret}" "emqx-core"
+add_emqx_user "${CORE_API}" "${CORE_AUTH}" "gw02_forwarder" "${MQTT_CORE_2_PASSWORD:-gw02_forward_secret}" "emqx-core"
 add_emqx_user "${CORE_API}" "${CORE_AUTH}" "${MQTT_APP_USERNAME:-enviromesh_backend}" "${MQTT_APP_PASSWORD:-backend_secret_pass}" "emqx-core"
+add_emqx_user "${CORE_API}" "${CORE_AUTH}" "monitor" "monitor123" "emqx-core"
 
 echo "✔ EMQX credentials initialization finished."
 
