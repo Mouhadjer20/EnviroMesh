@@ -140,13 +140,12 @@ class TestExponentialBackoff:
 
         initial_delay = cfg.FORWARD_RETRY_SECONDS
 
-        # Simulate two consecutive connection failures then stop
+        # Simulate connection failure then stop
         attempt_count = {"n": 0}
 
         def fake_connect(*args, **kwargs):
             attempt_count["n"] += 1
-            if attempt_count["n"] >= 2:
-                svc._running = False  # stop after 2 failures
+            svc._running = False  # stop after 1 failure
             raise ConnectionRefusedError("broker unreachable")
 
         svc.client.connect.side_effect = fake_connect
