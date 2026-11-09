@@ -37,7 +37,9 @@ START_ARG=false
 for arg in "$@"; do
     case "$arg" in
         --core|--rpi2) TARGET_ARG="core" ;;
-        --gateway|--rpi1) TARGET_ARG="gateway" ;;
+        --gw1|--gateway-1|--rpi1) TARGET_ARG="gw1" ;;
+        --gw2|--gateway-2) TARGET_ARG="gw2" ;;
+        --gateway) TARGET_ARG="gateway" ;;
         --unified|--single) TARGET_ARG="unified" ;;
         --defaults|-y) DEFAULTS_ARG=true ;;
         --start) START_ARG=true ;;
@@ -50,8 +52,9 @@ done
 echo -e "\n${CYAN}${BOLD}[Step 1/5] Select Deployment Target${NC}"
 echo -e "Which device are you configuring right now?"
 echo -e "  ${BOLD}[1] RPi 2 — Core Server${NC} (Central Broker, TimescaleDB, FastAPI, Dashboard, Nginx)"
-echo -e "  ${BOLD}[2] RPi 1 — Gateway${NC}     (Field Ingestion Broker, LoRa/Wi-Fi daemon, SQLite Queue)"
-echo -e "  ${BOLD}[3] Unified / Single-Device${NC} (Runs both Gateway & Core on this machine — demo/dev)"
+echo -e "  ${BOLD}[2] RPi 1 — Gateway 1${NC}   (GW01 - 192.168.1.20: Field Ingestion Broker, SQLite Queue)"
+echo -e "  ${BOLD}[3] RPi 1 — Gateway 2${NC}   (GW02 - 192.168.1.30: Secondary Field Ingestion Broker)"
+echo -e "  ${BOLD}[4] Unified / Single-Device${NC} (Runs both Gateway & Core on this machine — demo/dev)"
 
 if [ -n "${TARGET_ARG}" ]; then
     TARGET="${TARGET_ARG}"
@@ -60,11 +63,12 @@ elif [ "${DEFAULTS_ARG}" = true ] || [ ! -t 0 ]; then
     TARGET="unified"
     echo -e "  -> Non-interactive/default mode: using ${GREEN}${TARGET}${NC}"
 else
-    read -r -p "Select option [1/2/3] (Default: 3): " choice_target
-    case "${choice_target:-3}" in
+    read -r -p "Select option [1/2/3/4] (Default: 4): " choice_target
+    case "${choice_target:-4}" in
         1) TARGET="core" ;;
-        2) TARGET="gateway" ;;
-        3) TARGET="unified" ;;
+        2) TARGET="gw1" ;;
+        3) TARGET="gw2" ;;
+        4) TARGET="unified" ;;
         *) TARGET="unified" ;;
     esac
 fi
@@ -72,27 +76,50 @@ fi
 echo -e "Target configured: ${GREEN}${BOLD}${TARGET}${NC}"
 
 # ------------------------------------------------------------------------------
-# STEP 2: Configure Environment Variables (.env)
+# STEP 2: Configure Environment Variables (.env) — Single Root Source of Truth
 # ------------------------------------------------------------------------------
 echo -e "\n${CYAN}${BOLD}[Step 2/5] Environment Variables Configuration${NC}"
+echo -e "EnviroMesh uses a single, centralized ${GREEN}${BOLD}.env${NC} file at the project root."
 
-TARGET_ENV_FILE=".env"
-EXAMPLE_ENV_FILE=".env.example"
-
-if [ "${TARGET}" = "core" ]; then
-    TARGET_ENV_FILE="raspberry_pi/core/.env"
-    EXAMPLE_ENV_FILE="raspberry_pi/core/.env.example"
-elif [ "${TARGET}" = "gateway" ]; then
-    TARGET_ENV_FILE="raspberry_pi/gateway/.env"
-    EXAMPLE_ENV_FILE="raspberry_pi/gateway/.env.example"
-fi
+TARGET_ENV_FILE="${PROJECT_ROOT}/.env"
+EXAMPLE_ENV_FILE="${PROJECT_ROOT}/.env.example"
 
 if [ ! -f "${TARGET_ENV_FILE}" ]; then
     cp "${EXAMPLE_ENV_FILE}" "${TARGET_ENV_FILE}"
     chmod 600 "${TARGET_ENV_FILE}"
-    echo -e "  ✔ Created ${TARGET_ENV_FILE} from ${EXAMPLE_ENV_FILE}."
+    echo -e "  ✔ Created root ${TARGET_ENV_FILE} from ${EXAMPLE_ENV_FILE}."
 else
-    echo -e "  ✔ Existing ${TARGET_ENV_FILE} detected."
+    echo -e "  ✔ Using existing root ${TARGET_ENV_FILE}."
+fi
+
+# Link partition directories to root .env so sub-docker-compose commands always stay synchronized
+mkdir -p "${PROJECT_ROOT}/raspberry_pi/core" "${PROJECT_ROOT}/raspberry_pi/gateway"
+ln -sf ../../.env "${PROJECT_ROOT}/raspberry_pi/core/.env"
+ln -sf ../../.env "${PROJECT_ROOT}/raspberry_pi/gateway/.env"
+echo -e "  ✔ Synchronized core and gateway environments (symlinked to root .env)."
+
+set_env_var() {
+    local file="$1"
+    local key="$2"
+    local val="$3"
+    if grep -q "^${key}=" "${file}"; then
+        local escaped_val
+        escaped_val=$(printf '%s\n' "$val" | sed -e 's/[\/&]/\\&/g')
+        sed -i.bak "s/^${key}=.*/${key}=${escaped_val}/" "${file}" && rm -f "${file}.bak"
+    else
+        echo "${key}=${val}" >> "${file}"
+    fi
+}
+
+# Apply target-specific profile defaults to root .env
+if [ "${TARGET}" = "gw1" ]; then
+    set_env_var "${TARGET_ENV_FILE}" "GATEWAY_ID" "GW01"
+    set_env_var "${TARGET_ENV_FILE}" "GATEWAY_LAN_IP" "192.168.1.20"
+    set_env_var "${TARGET_ENV_FILE}" "ENABLE_LORA" "true"
+elif [ "${TARGET}" = "gw2" ]; then
+    set_env_var "${TARGET_ENV_FILE}" "GATEWAY_ID" "GW02"
+    set_env_var "${TARGET_ENV_FILE}" "GATEWAY_LAN_IP" "192.168.1.30"
+    set_env_var "${TARGET_ENV_FILE}" "ENABLE_LORA" "false"
 fi
 
 # Ask user if they wish to customize environment variables
@@ -110,19 +137,6 @@ fi
 if [ "${CUSTOMIZE_ENV}" = true ]; then
     echo -e "\n${YELLOW}=== Interactive Configuration for ${TARGET} ===${NC}"
 
-    set_env_var() {
-        local file="$1"
-        local key="$2"
-        local val="$3"
-        if grep -q "^${key}=" "${file}"; then
-            local escaped_val
-            escaped_val=$(printf '%s\n' "$val" | sed -e 's/[\/&]/\\&/g')
-            sed -i.bak "s/^${key}=.*/${key}=${escaped_val}/" "${file}" && rm -f "${file}.bak"
-        else
-            echo "${key}=${val}" >> "${file}"
-        fi
-    }
-
     if [ "${TARGET}" = "core" ]; then
         read -r -p "Enter Web Dashboard Port [8080]: " custom_port
         custom_port="${custom_port:-8080}"
@@ -137,10 +151,31 @@ if [ "${CUSTOMIZE_ENV}" = true ]; then
         custom_emqx_pass="${custom_emqx_pass:-admin123}"
         set_env_var "${TARGET_ENV_FILE}" "EMQX_DASHBOARD_PASSWORD" "${custom_emqx_pass}"
 
-    elif [ "${TARGET}" = "gateway" ]; then
+    elif [ "${TARGET}" = "gw1" ] || [ "${TARGET}" = "gateway" ]; then
         read -r -p "Enter Gateway ID [GW01]: " custom_gw_id
         custom_gw_id="${custom_gw_id:-GW01}"
         set_env_var "${TARGET_ENV_FILE}" "GATEWAY_ID" "${custom_gw_id}"
+
+        read -r -p "Enter Gateway LAN IP [192.168.1.20]: " custom_gw_ip
+        custom_gw_ip="${custom_gw_ip:-192.168.1.20}"
+        set_env_var "${TARGET_ENV_FILE}" "GATEWAY_LAN_IP" "${custom_gw_ip}"
+
+        read -r -p "Enter RPi 2 (Core Server) IP address [192.168.1.5]: " custom_core_ip
+        custom_core_ip="${custom_core_ip:-192.168.1.5}"
+        set_env_var "${TARGET_ENV_FILE}" "MQTT_CORE_HOST" "${custom_core_ip}"
+
+        read -r -p "Enter Local MQTT Port for Field Nodes [1883]: " custom_local_port
+        custom_local_port="${custom_local_port:-1883}"
+        set_env_var "${TARGET_ENV_FILE}" "MQTT_LOCAL_PORT" "${custom_local_port}"
+
+    elif [ "${TARGET}" = "gw2" ]; then
+        read -r -p "Enter Gateway ID [GW02]: " custom_gw_id
+        custom_gw_id="${custom_gw_id:-GW02}"
+        set_env_var "${TARGET_ENV_FILE}" "GATEWAY_ID" "${custom_gw_id}"
+
+        read -r -p "Enter Gateway LAN IP [192.168.1.30]: " custom_gw_ip
+        custom_gw_ip="${custom_gw_ip:-192.168.1.30}"
+        set_env_var "${TARGET_ENV_FILE}" "GATEWAY_LAN_IP" "${custom_gw_ip}"
 
         read -r -p "Enter RPi 2 (Core Server) IP address [192.168.1.5]: " custom_core_ip
         custom_core_ip="${custom_core_ip:-192.168.1.5}"
@@ -187,7 +222,9 @@ else
 fi
 
 # Gateway-specific hardware checks (SPI for SX1278 LoRa)
-if [ "${TARGET}" = "gateway" ] || [ "${TARGET}" = "unified" ]; then
+if [ "${TARGET}" = "gw2" ]; then
+    echo -e "  ℹ Gateway 2 (${BOLD}GW02${NC}) configured in pure Wi-Fi mode. LoRa receiver is ${YELLOW}disabled${NC} (ENABLE_LORA=false)."
+elif [ "${TARGET}" = "gw1" ] || [ "${TARGET}" = "gateway" ] || [ "${TARGET}" = "unified" ]; then
     echo -e "  Checking SPI hardware interface (/dev/spidev0.0)..."
     if [ -e "/dev/spidev0.0" ]; then
         echo -e "  ✔ /dev/spidev0.0 detected (Hardware LoRa active)."
@@ -202,17 +239,10 @@ if [ "${TARGET}" = "gateway" ] || [ "${TARGET}" = "unified" ]; then
     fi
 fi
 
-# Core-specific TLS certificates checks
-if [ "${TARGET}" = "core" ] || [ "${TARGET}" = "unified" ]; then
-    echo -e "  Verifying TLS certificate bundle for Central EMQX broker..."
-    mkdir -p raspberry_pi/core/emqx/certs
-    for cert in ca.crt server.crt server.key; do
-        if [ -f "raspberry_pi/core/emqx/certs/${cert}" ]; then
-            echo -e "  ✔ Found core cert: ${cert}"
-        else
-            echo -e "  ⚠ Core certificate ${cert} not found in raspberry_pi/core/emqx/certs/."
-        fi
-    done
+# TLS certificates provisioning (certs/ folder & Core/Gateway bundles)
+echo -e "  Provisioning TLS certificates..."
+if [ -f "${SCRIPT_DIR}/generate_certs.sh" ]; then
+    bash "${SCRIPT_DIR}/generate_certs.sh" || true
 fi
 
 # ------------------------------------------------------------------------------
@@ -220,8 +250,9 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n${CYAN}${BOLD}[Step 4/5] Preparing Directories, Permissions & Python Dependencies${NC}"
 
-# Ensure directories exist
-mkdir -p raspberry_pi/gateway/certs raspberry_pi/gateway/data raspberry_pi/gateway/emqx
+# Ensure directories exist (including root certs/)
+mkdir -p certs raspberry_pi/gateway/certs raspberry_pi/gateway/data raspberry_pi/gateway/emqx
+mkdir -p raspberry_pi/core/emqx/certs raspberry_pi/core/backend/services raspberry_pi/core/backend/routes
 mkdir -p raspberry_pi/core/backend/services raspberry_pi/core/backend/routes
 mkdir -p raspberry_pi/core/dashboard raspberry_pi/core/database/migrations raspberry_pi/core/database/seeds
 mkdir -p firmware/nodes/node_g11/src firmware/nodes/node_g41/src firmware/nodes/node_g31/src firmware/nodes/node_g51/src firmware/nodes/node_g61_servo/src
@@ -277,7 +308,7 @@ if [ "${AUTO_START}" = true ]; then
         echo -e "  Web Dashboard: ${BLUE}http://localhost:${WEB_PORT:-8080}${NC}"
         echo -e "  Default Admin: ${BOLD}admin@enviromesh.local${NC} / ${BOLD}Admin12345678!${NC}"
 
-    elif [ "${TARGET}" = "gateway" ]; then
+    elif [ "${TARGET}" = "gateway" ] || [ "${TARGET}" = "gw1" ] || [ "${TARGET}" = "gw2" ]; then
         cd "${PROJECT_ROOT}/raspberry_pi/gateway"
         docker compose up -d --build
         echo -e "\n${YELLOW}Provisioning EMQX authentication users...${NC}"
@@ -285,7 +316,7 @@ if [ "${AUTO_START}" = true ]; then
         bash "${SCRIPT_DIR}/init_emqx_auth.sh" || true
         cd "${PROJECT_ROOT}"
         echo -e "\n${GREEN}✔ Gateway stack started!${NC}"
-        echo -e "  Local Ingestion MQTT: ${BLUE}localhost:${MQTT_LOCAL_PORT:-1883}${NC}"
+        echo -e "  Local Ingestion MQTT: ${BLUE}0.0.0.0:${MQTT_LOCAL_PORT:-1883}${NC}"
     fi
 
     echo -e "\nTo check service health at any time, run:"
@@ -297,7 +328,7 @@ else
         echo -e "  ${CYAN}./scripts/docker_control.sh start${NC}"
     elif [ "${TARGET}" = "core" ]; then
         echo -e "  ${CYAN}cd raspberry_pi/core && docker compose up -d${NC}"
-    elif [ "${TARGET}" = "gateway" ]; then
+    elif [ "${TARGET}" = "gateway" ] || [ "${TARGET}" = "gw1" ] || [ "${TARGET}" = "gw2" ]; then
         echo -e "  ${CYAN}cd raspberry_pi/gateway && docker compose up -d${NC}"
     fi
 fi
