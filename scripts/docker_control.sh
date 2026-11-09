@@ -38,7 +38,10 @@ Commands:
   status | ps      Show status, ports, and health checks of all services
   logs [service]   Follow live container logs (e.g. logs backend, logs emqx)
   build            Rebuild container images (backend, dashboard)
-  auth             Provision / synchronize EMQX authentication users
+  auth [on|off]    Toggle or provision/sync EMQX authentication users
+  tls [on|off]     Toggle inter-Pi MQTT TLS encryption
+  security         View/change security settings (interactive toggle menu)
+  certs            Generate TLS certificates for Core & Gateways
   clean            Stop containers and remove volumes (destructive!)
   help             Show this help message
 EOF
@@ -61,6 +64,11 @@ cmd_start() {
     if [ ! -f ".env" ]; then
         echo -e "${YELLOW}Warning: .env not found. Copying .env.example...${NC}"
         cp .env.example .env
+    fi
+
+    # Ensure TLS certificates exist in certs/ and core/gateway directories
+    if [ -f "${SCRIPT_DIR}/generate_certs.sh" ]; then
+        bash "${SCRIPT_DIR}/generate_certs.sh" >/dev/null 2>&1 || true
     fi
 
     docker compose up -d --build --remove-orphans
@@ -179,7 +187,26 @@ case "${ACTION}" in
         cmd_build
         ;;
     auth)
-        bash "${SCRIPT_DIR}/init_emqx_auth.sh"
+        local sub="${1:-}"
+        if [ "$sub" = "on" ] || [ "$sub" = "off" ]; then
+            bash "${SCRIPT_DIR}/toggle_security.sh" --auth "$sub"
+        else
+            bash "${SCRIPT_DIR}/init_emqx_auth.sh"
+        fi
+        ;;
+    tls)
+        local sub="${1:-}"
+        if [ "$sub" = "on" ] || [ "$sub" = "off" ]; then
+            bash "${SCRIPT_DIR}/toggle_security.sh" --tls "$sub"
+        else
+            echo "Usage: ./scripts/docker_control.sh tls [on|off]"
+        fi
+        ;;
+    security)
+        bash "${SCRIPT_DIR}/toggle_security.sh"
+        ;;
+    certs)
+        bash "${SCRIPT_DIR}/generate_certs.sh"
         ;;
     clean)
         cmd_clean

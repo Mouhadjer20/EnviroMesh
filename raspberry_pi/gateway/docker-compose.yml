@@ -29,11 +29,14 @@ services:
       EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_DASHBOARD_PASSWORD}"
       EMQX_AUTHENTICATION__1__MECHANISM: password_based
       EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__ENABLE: "${EMQX_AUTH_ENABLED:-true}"
+      EMQX_AUTHORIZATION__NO_MATCH: "${EMQX_ACL_NO_MATCH:-deny}"
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:-false}"
     ports:
       # MQTT — reachable by ESP32 nodes on the local LAN
       - "${MQTT_BIND_IP:-0.0.0.0}:${MQTT_LOCAL_PORT:-1883}:1883"
-      # EMQX dashboard — restrict to localhost in production
-      - "${EMQX_DASHBOARD_BIND_IP:-127.0.0.1}:${EMQX_DASHBOARD_PORT:-18083}:18083"
+      # EMQX dashboard — 0.0.0.0 (accessible across LAN)
+      - "${EMQX_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_DASHBOARD_PORT:-18083}:18083"
     volumes:
       - emqx_local_data:/opt/emqx/data
       - emqx_local_log:/opt/emqx/log
@@ -85,6 +88,7 @@ services:
       MQTT_QOS: "1"
 
       SQLITE_PATH: "/var/lib/enviromesh/queue.db"
+      ENABLE_LORA: "${ENABLE_LORA:-true}"
       QUEUE_MAX_MESSAGES: "${QUEUE_MAX_MESSAGES:-50000}"
       FORWARD_BATCH_SIZE: "${FORWARD_BATCH_SIZE:-10}"
       FORWARD_RETRY_SECONDS: "${FORWARD_RETRY_SECONDS:-5}"

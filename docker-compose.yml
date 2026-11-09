@@ -53,11 +53,14 @@ services:
       EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_LOCAL_DASHBOARD_PASSWORD:-admin123}"
       EMQX_AUTHENTICATION__1__MECHANISM: password_based
       EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__ENABLE: "${EMQX_AUTH_ENABLED:-true}"
+      EMQX_AUTHORIZATION__NO_MATCH: "${EMQX_ACL_NO_MATCH:-deny}"
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:-false}"
     ports:
       # Standard MQTT port (1883) — ESP32 nodes & simulator connect here
       - "${MQTT_LOCAL_BIND_IP:-0.0.0.0}:${MQTT_LOCAL_PORT:-1883}:1883"
-      # Local EMQX dashboard (18083)
-      - "${EMQX_LOCAL_DASHBOARD_BIND_IP:-127.0.0.1}:${EMQX_LOCAL_DASHBOARD_PORT:-18083}:18083"
+      # Local EMQX dashboard (18083) — accessible across LAN (0.0.0.0)
+      - "${EMQX_LOCAL_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_LOCAL_DASHBOARD_PORT:-18083}:18083"
     volumes:
       - emqx_local_data:/opt/emqx/data
       - emqx_local_log:/opt/emqx/log
@@ -87,7 +90,7 @@ services:
         condition: service_healthy
     environment:
       GATEWAY_ID: "${GATEWAY_ID:-GW01}"
-      GATEWAY_LAN_IP: "${GATEWAY_LAN_IP:-127.0.0.1}"
+      GATEWAY_LAN_IP: "${GATEWAY_LAN_IP:-192.168.1.20}"
 
       # Local EMQX connection (on Docker network)
       MQTT_LOCAL_HOST: "emqx-local"
@@ -113,12 +116,61 @@ services:
       FORWARD_BATCH_SIZE: "${FORWARD_BATCH_SIZE:-10}"
       FORWARD_RETRY_SECONDS: "${FORWARD_RETRY_SECONDS:-5}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      ENABLE_LORA: "${ENABLE_LORA:-true}"
     # Optional hardware passthrough (uncomment if running on a real RPi with SX1278 SPI wiring)
     # devices:
     #   - /dev/spidev0.0:/dev/spidev0.0
     #   - /dev/gpiomem:/dev/gpiomem
     volumes:
       - gateway_queue:/var/lib/enviromesh
+      - ./raspberry_pi/gateway/certs:/app/certs:ro
+    networks:
+      - enviromesh
+
+  # Secondary Gateway 2 (GW02 on 192.168.1.30 — start with: docker compose --profile dual-gateway up -d)
+  gateway-2:
+    build:
+      context: ./raspberry_pi/gateway
+      dockerfile: Dockerfile
+    container_name: enviromesh-gateway-2
+    restart: unless-stopped
+    profiles: ["dual-gateway", "all"]
+    depends_on:
+      emqx-local:
+        condition: service_healthy
+      emqx-core:
+        condition: service_healthy
+    environment:
+      GATEWAY_ID: "${GATEWAY_2_ID:-GW02}"
+      GATEWAY_LAN_IP: "${GATEWAY_2_LAN_IP:-192.168.1.30}"
+
+      # Local EMQX connection (on Docker network)
+      MQTT_LOCAL_HOST: "emqx-local"
+      MQTT_LOCAL_PORT: "1883"
+      MQTT_LOCAL_USERNAME: "${MQTT_LOCAL_USERNAME:-gw_ingestion}"
+      MQTT_LOCAL_PASSWORD: "${MQTT_LOCAL_PASSWORD:-gw_ingest_secret}"
+
+      # Core EMQX forwarding (on Docker network)
+      MQTT_CORE_HOST: "emqx-core"
+      MQTT_CORE_PORT: "${MQTT_CORE_PORT:-1883}"
+      MQTT_CORE_USE_TLS: "${MQTT_CORE_USE_TLS:-false}"
+      MQTT_CORE_USERNAME: "${MQTT_CORE_2_USERNAME:-gw02_forwarder}"
+      MQTT_CORE_PASSWORD: "${MQTT_CORE_2_PASSWORD:-gw02_forward_secret}"
+      MQTT_CORE_CA: "/app/certs/core-ca.crt"
+
+      MQTT_INPUT_TOPIC: "enviromesh/devices/+/telemetry"
+      MQTT_OUTPUT_TOPIC: "enviromesh/gateway/${GATEWAY_2_ID:-GW02}/telemetry"
+      MQTT_STATUS_TOPIC: "enviromesh/gateway/${GATEWAY_2_ID:-GW02}/status"
+      MQTT_QOS: "1"
+
+      SQLITE_PATH: "/var/lib/enviromesh/queue_gw2.db"
+      QUEUE_MAX_MESSAGES: "${QUEUE_MAX_MESSAGES:-50000}"
+      FORWARD_BATCH_SIZE: "${FORWARD_BATCH_SIZE:-10}"
+      FORWARD_RETRY_SECONDS: "${FORWARD_RETRY_SECONDS:-5}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      ENABLE_LORA: "false"
+    volumes:
+      - gateway_2_queue:/var/lib/enviromesh
       - ./raspberry_pi/gateway/certs:/app/certs:ro
     networks:
       - enviromesh
@@ -138,13 +190,19 @@ services:
       EMQX_DASHBOARD__DEFAULT_USERNAME: "${EMQX_CORE_DASHBOARD_USERNAME:-admin}"
       EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_CORE_DASHBOARD_PASSWORD:-admin123}"
       EMQX_NODE__COOKIE: "${EMQX_NODE_COOKIE:-enviromesh_secret_cookie}"
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__ENABLE: "${EMQX_AUTH_ENABLED:-true}"
+      EMQX_AUTHORIZATION__NO_MATCH: "${EMQX_ACL_NO_MATCH:-deny}"
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:-false}"
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE: "${MQTT_TLS_ENABLED:-true}"
     ports:
       # MQTT over TLS port
       - "${MQTT_TLS_BIND_IP:-0.0.0.0}:${MQTT_TLS_PORT:-8883}:8883"
       # Plain MQTT for host debugging (mapped to port 1884 to avoid conflict with local broker)
-      - "127.0.0.1:${MQTT_CORE_DEBUG_PORT:-1884}:1883"
-      # Core EMQX dashboard (18084 to avoid conflict with local broker on 18083)
-      - "127.0.0.1:${EMQX_CORE_DASHBOARD_PORT:-18084}:18083"
+      - "${MQTT_CORE_DEBUG_BIND_IP:-0.0.0.0}:${MQTT_CORE_DEBUG_PORT:-1884}:1883"
+      # Core EMQX dashboard (18084 to avoid conflict with local broker on 18083) — accessible across LAN (0.0.0.0)
+      - "${EMQX_CORE_DASHBOARD_BIND_IP:-0.0.0.0}:${EMQX_CORE_DASHBOARD_PORT:-18084}:18083"
     volumes:
       - emqx_core_data:/opt/emqx/data
       - emqx_core_log:/opt/emqx/log
@@ -258,6 +316,7 @@ volumes:
   emqx_local_data:
   emqx_local_log:
   gateway_queue:
+  gateway_2_queue:
   emqx_core_data:
   emqx_core_log:
   timescale_data:
