@@ -20,7 +20,7 @@ raspberry_pi/gateway/
 ├── docker-compose.yml       # Orchestrates local EMQX and Python gateway service
 ├── Dockerfile               # Gateway container build recipe
 ├── requirements.txt         # Python dependencies
-├── .env.example             # Gateway environment template
+├── .env                     # Symlink to central root .env (../../.env)
 ├── emqx/
 │   ├── emqx.conf            # Local EMQX configuration
 │   └── acl.conf             # Strict per-device ACLs
@@ -41,30 +41,61 @@ raspberry_pi/gateway/
     └── main.py              # Application lifecycle entrypoint
 ```
 
-## Quick Start
+## Quick Start (Gateway 1 & Gateway 2 Profiles)
 
-1. **Hardware Setup**:
-   Ensure SPI is enabled in `raspi-config`:
-   ```bash
-   sudo raspi-config nonint do_spi 0
-   ```
-2. **Configure Environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your gateway credentials and Core RPi IP
-   nano .env
-   ```
-3. **Install Core CA Certificate**:
-   Copy the `ca.crt` generated on RPi 2 to `certs/core-ca.crt`:
-   ```bash
-   cp /path/to/ca.crt certs/core-ca.crt
-   ```
-4. **Deploy Containers**:
-   ```bash
-   docker compose up -d --build
-   ```
-5. **Verify Operation**:
-   ```bash
-   docker compose logs -f gateway
-   ```
+EnviroMesh supports deploying either a single gateway or multiple redundant gateways across different LAN segments.
+
+### Option A: Deploying Gateway 1 (GW01 — 192.168.1.20)
+Configure in root `.env` (or run `./install.sh --gw1`):
+```bash
+GATEWAY_ID=GW01
+GATEWAY_LAN_IP=192.168.1.20
+ENABLE_LORA=true
+```
+Then start the stack:
+```bash
+cd raspberry_pi/gateway && docker compose up -d --build
+```
+
+### Option B: Deploying Gateway 2 (GW02 — 192.168.1.30: Wi-Fi Only)
+Gateway 2 operates without an SX1278 module (`ENABLE_LORA=false`). Configure in root `.env` (or run `./install.sh --gw2`):
+```bash
+GATEWAY_ID=GW02
+GATEWAY_LAN_IP=192.168.1.30
+ENABLE_LORA=false
+```
+Then start the stack:
+```bash
+cd raspberry_pi/gateway && docker compose up -d --build
+```
+
+### LoRa Hardware Toggle (`ENABLE_LORA`)
+To easily disable or enable the LoRa receiver on any gateway without changing code:
+* **Gateway 1 (`GW01`)**: `ENABLE_LORA=true` in `.env` (Starts SX1278 hardware SPI receiver thread).
+* **Gateway 2 (`GW02`)**: `ENABLE_LORA=false` in `.env` (Disables LoRa completely; gateway runs purely on Wi-Fi MQTT ingestion).
+
+### Local Development / Multi-Gateway Emulation
+To run both gateways concurrently on the same host machine for end-to-end integration testing:
+```bash
+# In the project root:
+docker compose --profile dual-gateway up -d
+```
+
+### EMQX Dashboard Access
+The local EMQX dashboard is bound to `0.0.0.0:18083` by default, making it accessible from any device on your LAN at `http://<GATEWAY_IP>:18083` (Default credentials: `admin` / `admin123`).
+
+### MQTT Authentication & TLS Toggle
+You can toggle between authenticated/TLS and anonymous/plain modes using the security switch:
+```bash
+# In project root:
+./scripts/toggle_security.sh --auth on|off
+./scripts/toggle_security.sh --tls on|off
+```
+
+### Installing TLS Certificates
+Certificates are generated automatically by `install.sh` and `../../scripts/generate_certs.sh`. When deploying to a separate physical Pi, copy the generated root CA certificate:
+```bash
+# From RPi 2 Core:
+scp raspberry_pi/core/emqx/certs/ca.crt pi@<GATEWAY_IP>:/home/pi/enviromesh/raspberry_pi/gateway/certs/core-ca.crt
+```
 

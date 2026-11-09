@@ -18,7 +18,7 @@ It receives authenticated, TLS-encrypted telemetry streams from the Gateway (RPi
 ```
 raspberry_pi/core/
 ├── docker-compose.yml       # Orchestrates EMQX, TimescaleDB, Backend, Dashboard, Nginx
-├── .env.example             # Core environment template
+├── .env                     # Symlink to central root .env (../../.env)
 ├── emqx/
 │   ├── emqx.conf            # Core EMQX configuration with TLS listener
 │   ├── acl.conf             # Restricted ACL rules
@@ -43,17 +43,31 @@ raspberry_pi/core/
 ## Quick Start
 
 1. **Configure Environment**:
+   Run the setup script from the root (or `./install.sh --core`):
    ```bash
-   cp .env.example .env
-   nano .env
+   cd ../.. && ./scripts/setup_env.sh --core
+   cd raspberry_pi/core
    ```
+   *Note: `raspberry_pi/core/.env` is symlinked to the central `../../.env`.*
 2. **Generate TLS Certificates**:
-   Follow instructions in `docs/certificate-setup.md` to generate CA and server certificates, placing them in `emqx/certs/`.
+   Run the automated generator (also executed automatically during `install.sh`):
+   ```bash
+   ../../scripts/generate_certs.sh
+   ```
+   Certificates are automatically placed in `emqx/certs/` with Subject Alternative Names for Core (`192.168.1.5`), Gateway 1 (`192.168.1.20`), and Gateway 2 (`192.168.1.30`).
 3. **Deploy Core Stack**:
    ```bash
    docker compose up -d --build
    ```
-4. **Run Database Migrations** (including the user security migrations):
+4. **EMQX Dashboard**:
+   Accessible on `http://<CORE_RPi_IP>:18083` across your LAN (Default credentials: `admin` / `admin123`).
+5. **Security Mode Switch**:
+   Toggle Authentication and TLS with:
+   ```bash
+   ../../scripts/toggle_security.sh --auth on|off
+   ../../scripts/toggle_security.sh --tls on|off
+   ```
+6. **Run Database Migrations** (including the user security migrations):
    ```bash
    docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/001_create_registry.sql'
    docker compose exec -T timescaledb sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/001_create_telemetry.sql'
