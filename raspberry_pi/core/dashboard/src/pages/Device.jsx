@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import Chart from '../components/Chart.jsx'
 import { useData } from '../context/DataContext.jsx'
 import { useApi } from '../hooks/useApi.js'
@@ -21,6 +21,8 @@ export default function Device() {
   const nums = points.map(p => p.v)
   const events = useMemo(() => eventsFromReadings(rows), [rows])
   const on = isRecent(latest)
+
+  if (hist.status === 403) return <Navigate to="/access-denied" replace />
 
   return (
     <>

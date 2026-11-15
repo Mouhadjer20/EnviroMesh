@@ -72,6 +72,20 @@ def list_devices(device_id=None, group_code=None):
     )
 
 
+def get_device_group(device_id):
+    rows = _query(
+        """
+        SELECT g.group_code
+        FROM devices d
+        LEFT JOIN groups g ON g.id = d.group_id
+        WHERE d.device_id = %(device_id)s
+        """,
+        {"device_id": device_id},
+        what="device group",
+    )
+    return rows[0] if rows else None
+
+
 _TELEMETRY = """
     SELECT t.timestamp, t.device_id, t.zone, t.metrics, t.received_at,
            t.protocol, t.rssi, t.metadata,

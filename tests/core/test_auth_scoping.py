@@ -8,7 +8,10 @@ from services import auth, database_access
 
 @pytest.fixture
 def client():
-    return TestClient(main.app)
+    main.app.dependency_overrides.clear()
+    with TestClient(main.app) as test_client:
+        yield test_client
+    main.app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize(
@@ -56,3 +59,45 @@ def test_technician_telemetry_scope_uses_registry_membership(monkeypatch, query)
     assert captured["params"]["group_code"] == "G3"
     assert "g.group_code = %(group_code)s" in captured["sql"]
     assert "metadata->>'group_code') = %(group_code)s" not in captured["sql"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/devices/G41", "/telemetry/?device_id=G41", "/telemetry/G41/latest"],
+)
+def test_technician_is_denied_device_and_telemetry_routes_outside_group(client, monkeypatch, path):
+    technician = {"id": "tech-1", "role": "zone_technician", "group_code": "G3"}
+    main.app.dependency_overrides[auth.get_current_user] = lambda: technician
+    monkeypatch.setattr(database_access, "get_device_group", lambda device_id: {"group_code": "G4"})
+
+    response = client.get(path)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Access denied: device belongs to another group"
+
+
+def test_technician_can_access_device_in_own_group(client, monkeypatch):
+    technician = {"id": "tech-1", "role": "zone_technician", "group_code": "G3"}
+    main.app.dependency_overrides[auth.get_current_user] = lambda: technician
+    monkeypatch.setattr(database_access, "get_device_group", lambda device_id: {"group_code": "G3"})
+    monkeypatch.setattr(database_access, "list_devices", lambda *args, **kwargs: [{"device_id": "G31"}])
+
+    response = client.get("/devices/G31")
+
+    assert response.status_code == 200
+    assert response.json()["device_id"] == "G31"
+
+
+def test_device_access_uses_registry_group_and_keeps_unknown_devices_not_found(monkeypatch):
+    monkeypatch.setattr(database_access, "get_device_group", lambda device_id: None)
+
+    with pytest.raises(HTTPException) as error:
+        auth.ensure_device_access("G99", {"role": "zone_technician", "group_code": "G3"})
+
+    assert error.value.status_code == 404
+
+
+def test_admin_can_access_device_in_any_group(monkeypatch):
+    monkeypatch.setattr(database_access, "get_device_group", lambda device_id: {"group_code": "G4"})
+
+    assert auth.ensure_device_access("G41", {"role": "admin", "group_code": None}) is None

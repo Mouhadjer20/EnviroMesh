@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from services import database_access as db
-from services.auth import get_current_user, scope_group
+from services.auth import ensure_device_access, get_current_user, scope_group
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
@@ -24,6 +24,8 @@ def get_telemetry(
     user: dict = Depends(get_current_user),
 ):
     """Mesures, plus récentes en premier, filtrables par nœud et par période."""
+    if device_id:
+        ensure_device_access(device_id, user)
     return db.list_telemetry(device_id, start, end, limit, group_code=scope_group(user))
 
 
@@ -36,6 +38,7 @@ def get_latest_for_all_devices(user: dict = Depends(get_current_user)):
 @router.get("/{device_id}/latest", response_model=dict)
 def get_latest_telemetry(device_id: str, user: dict = Depends(get_current_user)):
     """Dernière mesure d'un nœud."""
+    ensure_device_access(device_id, user)
     rows = db.latest_telemetry(device_id, group_code=scope_group(user))
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No telemetry found")

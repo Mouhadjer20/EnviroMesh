@@ -10,6 +10,7 @@ import Login from './pages/Login.jsx'
 import UserManagement from './pages/UserManagement.jsx'
 import GroupManagement from './pages/GroupManagement.jsx'
 import Settings from './pages/Settings.jsx'
+import AccessDenied from './pages/AccessDenied.jsx'
 import { apiRequest } from './api.js'
 
 const icons = {
@@ -228,6 +229,7 @@ export default function App() {
             {user.password_change_required ? (
               <Routes>
                 <Route path="/settings" element={<Settings user={user} onUserUpdated={updateCurrentUser} />} />
+                <Route path="/access-denied" element={<AccessDenied />} />
                 <Route path="*" element={<Navigate to="/settings" replace />} />
               </Routes>
             ) : (
@@ -235,9 +237,10 @@ export default function App() {
                 <Route path="/" element={<Overview />} />
                 <Route path="/device/:id" element={<Device />} />
                 <Route path="/alerts" element={<Alerts />} />
-                <Route path="/groups" element={user.role === 'admin' ? <GroupManagement /> : <Navigate to="/" replace />} />
-                <Route path="/users" element={user.role === 'admin' ? <UserManagement currentUser={user} /> : <Navigate to="/" replace />} />
+                <Route path="/groups" element={user.role === 'admin' ? <GroupManagement /> : <Navigate to="/access-denied" replace />} />
+                <Route path="/users" element={user.role === 'admin' ? <UserManagement currentUser={user} /> : <Navigate to="/access-denied" replace />} />
                 <Route path="/settings" element={<Settings user={user} onUserUpdated={updateCurrentUser} />} />
+                <Route path="/access-denied" element={<AccessDenied />} />
                 <Route path="/login" element={<Navigate to="/" replace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

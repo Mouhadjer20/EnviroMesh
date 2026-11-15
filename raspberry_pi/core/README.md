@@ -71,4 +71,4 @@ raspberry_pi/core/
 7. **Access the Dashboard**:
    Open your browser to `http://<CORE_RPi_IP>:8080` and sign in with the administrator account.
 
-Administrators can create groups, assign devices, create users, assign each technician to one group, deactivate accounts, and reset temporary passwords. Technicians' device and telemetry queries are restricted in SQL to their assigned group. Seed accounts created with the published demo password are required to change it before accessing dashboard data. Profile details and password changes are available under Settings.
+Administrators can create groups, assign devices, create users, assign each technician to one group, deactivate accounts, and reset temporary passwords. Technicians' device and telemetry queries are restricted in SQL to their assigned group. Requests for a specific device or its telemetry first check the device's group in the registry; a cross-group request receives HTTP 403 and the dashboard displays an access-denied page. Seed accounts created with the published demo password are required to change it before accessing dashboard data. Profile details and password changes are available under Settings.

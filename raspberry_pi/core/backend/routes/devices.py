@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from services import database_access as db
-from services.auth import get_current_user, require_admin, scope_group
+from services.auth import ensure_device_access, get_current_user, require_admin, scope_group
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -16,8 +16,9 @@ def list_devices(user: dict = Depends(get_current_user)):
 
 @router.get("/{device_id}", response_model=dict)
 def get_device(device_id: str, user: dict = Depends(get_current_user)):
+    ensure_device_access(device_id, user)
     rows = db.list_devices(device_id, group_code=scope_group(user))
-    if not rows:  # hors périmètre = même réponse qu'un nœud inexistant
+    if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
     return rows[0]
 

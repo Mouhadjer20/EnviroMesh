@@ -27,7 +27,9 @@ export async function apiRequest(path, { method = 'GET', body, signal } = {}) {
         ? detail.map(item => `${item.loc?.slice(-1)[0] || 'champ'} : ${item.msg}`).join(' · ')
         : detail || message
     } catch {}
-    throw new Error(message)
+    const error = new Error(message)
+    error.status = response.status
+    throw error
   }
   if (response.status === 204) return null
   return response.json()

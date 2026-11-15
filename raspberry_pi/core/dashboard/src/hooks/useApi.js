@@ -3,19 +3,21 @@ import { POLL_MS } from '../lib.js'
 import { apiRequest } from '../api.js'
 
 export function useApi(path, every = POLL_MS, select = x => x) {
-  const [s, setS] = useState({ data: null, error: '', loading: true })
+  const [s, setS] = useState({ data: null, error: '', status: null, loading: true })
   useEffect(() => {
     if (!path) {
-      setS({ data: null, error: '', loading: false })
+      setS({ data: null, error: '', status: null, loading: false })
       return
     }
     let stop = false
-    setS({ data: null, error: '', loading: true })
+    setS({ data: null, error: '', status: null, loading: true })
     const go = async () => {
       try {
         const d = select(await apiRequest(path))
-        if (!stop) setS({ data: d, error: '', loading: false })
-      } catch (e) { if (!stop) setS(p => ({ ...p, error: e.message || 'API indisponible', loading: false })) }
+        if (!stop) setS({ data: d, error: '', status: null, loading: false })
+      } catch (e) {
+        if (!stop) setS(p => ({ ...p, error: e.message || 'API indisponible', status: e.status || null, loading: false }))
+      }
     }
     go()
     const id = setInterval(go, every)

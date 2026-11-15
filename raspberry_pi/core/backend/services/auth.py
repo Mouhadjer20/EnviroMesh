@@ -17,7 +17,7 @@ import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from services import user_store
+from services import database_access, user_store
 
 logger = logging.getLogger("auth")
 
@@ -85,6 +85,18 @@ def scope_group(user: dict):
     """Group a query must be limited to: None for admins (no limit). A technician
     without a group matches nothing."""
     return None if user["role"] == "admin" else (user["group_code"] or "-")
+
+
+def ensure_device_access(device_id: str, user: dict) -> None:
+    """Require a registered device and restrict technicians to their own group."""
+    device = database_access.get_device_group(device_id)
+    print(f"ensure_device_access: device_id={device_id}, user={user}, device={device}")
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if user["role"] != "admin" and (
+        not user.get("group_code") or device["group_code"] != user["group_code"]
+    ):
+        raise HTTPException(status_code=403, detail="Access denied: device belongs to another group")
 
 
 # --- login throttling (in memory, per e-mail) ---------------------------------
