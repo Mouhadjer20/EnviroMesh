@@ -72,12 +72,16 @@ class MqttSubscriber:
             logger.warning("Invalid JSON payload on %s: %s", message.topic, exc)
             return
 
-        logger.info("Received telemetry on %s from device %s", message.topic, payload.get("device_id"))
-
         # 1. Validate via backend validator.
         if not validate(payload):
-            logger.warning("Telemetry failed validation, discarding: %s", payload)
+            logger.warning("Telemetry failed validation on %s, discarding", message.topic)
             return
+
+        logger.info(
+            "Received telemetry on %s from device %s",
+            message.topic,
+            payload["device_id"],
+        )
 
         # 2. Persist to TimescaleDB via backend database_writer (with dedup check).
         write_telemetry(payload)

@@ -4,9 +4,9 @@ test_telemetry_validator.py
 Tests for raspberry_pi/gateway/gateway/telemetry_validator.py
 
 The gateway validator:
-  - Accepts any dict with a valid ``device_id`` string.
+  - Requires a bounded, safe ``device_id`` and valid payload structure.
   - If a ``metrics`` key is present, each metric value is range-checked
-    against METRIC_RANGES (or skipped if the key is in BOOLEAN_METRICS).
+    against METRIC_RANGES or validated as a boolean/scalar custom metric.
   - Returns True / False — never raises.
 """
 
@@ -59,7 +59,7 @@ class TestValidPayloads:
         assert validate({"device_id": "G31", "metrics": {"temperature_c": None}}) is True
 
     def test_unknown_metric_key_is_ignored(self):
-        """Keys not in METRIC_RANGES are not checked — they pass through."""
+        """Scalar custom metrics remain supported."""
         assert validate({"device_id": "G31", "metrics": {"custom_sensor": 9999}}) is True
 
 
@@ -82,6 +82,19 @@ class TestBooleanMetrics:
     def test_smoke_detected_false_accepted(self):
         assert validate({"device_id": "G31", "metrics": {"smoke_detected": False}}) is True
 
+    @pytest.mark.parametrize("key", list(BOOLEAN_METRICS))
+    @pytest.mark.parametrize("value", ["false", 0, 1, [], {}])
+    def test_boolean_metric_rejects_non_boolean_values(self, key, value):
+        assert validate({"device_id": "G31", "metrics": {key: value}}) is False
+
+    @pytest.mark.parametrize("value", [True, False, 0, 1])
+    def test_motion_detected_accepts_firmware_boolean_forms(self, value):
+        assert validate({"device_id": "G31", "metrics": {"motion_detected": value}}) is True
+
+    @pytest.mark.parametrize("value", ["true", 2, -1, [], {}])
+    def test_motion_detected_rejects_invalid_values(self, value):
+        assert validate({"device_id": "G31", "metrics": {"motion_detected": value}}) is False
+
 
 # ===========================================================================
 # Missing / invalid device_id
@@ -99,6 +112,12 @@ class TestMissingDeviceId:
 
     def test_none_device_id_fails(self):
         assert validate({"device_id": None}) is False
+
+    def test_device_id_with_topic_metacharacters_fails(self):
+        assert validate({"device_id": "G31/other"}) is False
+
+    def test_overlong_device_id_fails(self):
+        assert validate({"device_id": "G" + "1" * 32}) is False
 
 
 # ===========================================================================
@@ -148,3 +167,28 @@ class TestInvalidTypes:
     def test_non_numeric_humidity_fails(self):
         assert validate({"device_id": "G31", "metrics": {"humidity": "high"}}) is False
 
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_numeric_metric_fails(self, value):
+        assert validate({"device_id": "G31", "metrics": {"temperature_c": value}}) is False
+
+    def test_overflowing_numeric_metric_fails(self):
+        assert validate({"device_id": "G31", "metrics": {"temperature_c": 10 ** 400}}) is False
+
+    def test_overflowing_custom_metric_fails(self):
+        assert validate({"device_id": "G31", "metrics": {"custom_sensor": 10 ** 400}}) is False
+
+    def test_boolean_is_not_accepted_as_numeric_metric(self):
+        assert validate({"device_id": "G31", "metrics": {"temperature_c": True}}) is False
+
+    def test_custom_metric_object_fails(self):
+        assert validate({"device_id": "G31", "metrics": {"custom_sensor": {"value": 1}}}) is False
+
+    def test_too_many_metrics_fails(self):
+        metrics = {f"custom_{index}": index for index in range(65)}
+        assert validate({"device_id": "G31", "metrics": metrics}) is False
+
+    def test_non_string_metric_name_fails(self):
+        assert validate({"device_id": "G31", "metrics": {1: 2}}) is False
+
+    def test_non_dict_metadata_fails(self):
+        assert validate({"device_id": "G31", "metadata": "not-an-object"}) is False

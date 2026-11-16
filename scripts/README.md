@@ -103,7 +103,7 @@ Manage migrations, seed data, and query verification directly:
 
 ## 4. Simulating Sensor Telemetry (Hardware-Free Testing)
 
-Simulate field nodes transmitting realistic sensor data to EMQX and TimescaleDB:
+Simulate field nodes transmitting realistic sensor data through the RPi 1 Gateway:
 
 ```bash
 # Simulate G11 node emitting every 2 seconds (infinite loop)
@@ -121,6 +121,11 @@ Simulate field nodes transmitting realistic sensor data to EMQX and TimescaleDB:
 # Print JSON payloads to stdout without publishing to MQTT
 ./scripts/simulate_telemetry.py --device G31 --print-only
 ```
+
+For live testing, point the simulator at the Gateway's local EMQX broker and use
+the device's configured MQTT account. Do not publish raw device topics directly
+to the Core broker: its ACL intentionally denies them; the Gateway validates
+and forwards telemetry on the authorized gateway topic.
 
 ---
 

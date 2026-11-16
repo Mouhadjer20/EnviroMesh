@@ -36,7 +36,7 @@ services:
     container_name: enviromesh-timescaledb
     restart: unless-stopped
     ports:
-      - "0.0.0.0:5432:5432"
+      - "0.0.0.0:5433:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -44,6 +44,7 @@ services:
       TZ: UTC
     volumes:
       - timescale_data:/var/lib/postgresql/data
+      - ./raspberry_pi/core/database/migrations:/migrations:ro
     # No public database port; application services use the internal network.
     healthcheck:
       test:
@@ -72,7 +73,7 @@ services:
       MQTT_PORT: 1883
       MQTT_USERNAME: ${MQTT_APP_USERNAME}
       MQTT_PASSWORD: ${MQTT_APP_PASSWORD}
-      MQTT_TOPIC: enviromesh/devices/+/telemetry
+      MQTT_TOPIC: enviromesh/gateway/+/telemetry
 
       DB_HOST: timescaledb
       DB_PORT: 5432
